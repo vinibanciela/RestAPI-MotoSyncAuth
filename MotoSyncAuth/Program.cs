@@ -75,19 +75,6 @@ authGroup.MapPost("/login", (LoginRequest request, UserService userService, JwtS
 .Produces(401)              // retorno se falhar
 .RequireRateLimiting("default"); // aplica controle de frequência
 
-// POST /auth/register → Cadastra novo usuário
-authGroup.MapPost("/register", (LoginRequest request, UserService userService) =>
-{
-    var user = userService.RegisterUser(request.Email, request.Password);
-    return user is not null 
-        ? Results.Ok("Usuário registrado com sucesso.") 
-        : Results.BadRequest("Email já cadastrado.");
-})
-.WithSummary("Cadastro de novo usuário")
-.WithDescription("Cria um novo usuário com email e senha.")
-.Produces<string>()
-.Produces(400);
-
 // GET /auth/me → Retorna dados do usuário autenticado via token
 authGroup.MapGet("/me", (HttpContext http, JwtService jwt, UserService userService) =>
 {
