@@ -4,6 +4,9 @@ using System.Threading.RateLimiting;
 using MotoSyncAuth.Services;
 using MotoSyncAuth.Models;
 using MotoSyncAuth.DTOs;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
+
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -69,6 +72,28 @@ builder.Services.AddRateLimiter(opt =>
 builder.Services.AddSingleton<JwtService>();    // Gera e valida tokens
 builder.Services.AddSingleton<UserService>();   // Simula usuários em memória
 
+// Configura Autenticação JWT (com chave secreta)
+builder.Services.AddAuthentication("Bearer")
+    .AddJwtBearer("Bearer", options =>
+    {
+        options.RequireHttpsMetadata = false;
+        options.SaveToken = true;
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = false,
+            ValidateAudience = false,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(
+                Encoding.UTF8.GetBytes(builder.Configuration["JwtSettings:Secret"])
+            )
+        };
+    });
+
+// Configura Autorização (para controle de acesso)
+builder.Services.AddAuthorization();
+
+
 var app = builder.Build();
 
 // -----------------------------------------------------------
@@ -79,6 +104,9 @@ app.UseSwagger();
 app.UseSwaggerUI();
 app.UseCors("AllowAll");
 app.UseRateLimiter(); // protege as rotas com limites de requisições
+app.UseAuthentication();
+app.UseAuthorization();
+
 
 // -----------------------------------------------------------
 // ROTAS DE AUTENTICAÇÃO
@@ -155,92 +183,123 @@ var userGroup = app.MapGroup("/users").WithTags("Usuários");
 // GET /users → Lista todos os usuários
 userGroup.MapGet("/", (HttpContext http, UserService userService, JwtService jwt) =>
 {
-    // Extrai o usuário autenticado
+    // Extrai o usuário autenticado a partir do token JWT
     var user = jwt.ExtractUserFromRequest(http);
     if (user == null)
         return Results.Unauthorized();
 
-    // Todos os cargos podem acessar, mas com níveis de visibilidade diferentes
+    // Obtém todos os usuários do sistema
     var users = userService.GetAllUsers();
 
-    // Se não for Administrador, restringe visualização a Gerente e Funcionário
-    if (user.Role?.Name != "Administrador")
+    if (user.Role?.Name == "Administrador")
     {
-        users = users.Where(u => u.Role?.Name == "Gerente" || u.Role?.Name == "Funcionario");
+        // Se for Administrador, retorna todos os usuários
+        var response = users.Select(u => new UserResponse(u.Id, u.Username, u.Email, u.Role?.Name ?? ""));
+        return Results.Ok(response);
     }
-
-    // Mapeia para DTO
-    var response = users.Select(u =>
-        new UserResponse(u.Id, u.Username, u.Email, u.Role?.Name ?? "")
-    );
-
-    return Results.Ok(response);
+    else if (user.Role?.Name == "Gerente")
+    {
+        // Se for Gerente, retorna apenas Gerentes e Funcionários
+        users = users.Where(u => u.Role?.Name == "Gerente" || u.Role?.Name == "Funcionario");
+        var response = users.Select(u => new UserResponse(u.Id, u.Username, u.Email, u.Role?.Name ?? ""));
+        return Results.Ok(response);
+    }
+    else
+    {
+        // Funcionário Administrativo não tem permissão para listar usuários
+        return Results.Forbid();
+    }
 })
 .WithSummary("Listar usuários")
-.WithDescription("Administrador vê todos. Gerente e Funcionário veem apenas Gerentes e Funcionários.")
+.WithDescription("Administrador vê todos. Gerente vê Gerentes e Funcionários. Funcionário não vê ninguém.")
 .Produces<IEnumerable<UserResponse>>(200)
-.Produces(401);
+.Produces(401)
+.Produces(403);
 
 
 // GET /users/{id} → Retorna um usuário específico por ID
 userGroup.MapGet("/{id}", (int id, HttpContext http, UserService userService, JwtService jwt) =>
 {
-    // Extrai o usuário autenticado
+    // Extrai o usuário autenticado a partir do token JWT
     var user = jwt.ExtractUserFromRequest(http);
     if (user == null)
         return Results.Unauthorized();
 
-    // Busca o usuário alvo
+    // Busca o usuário alvo pelo ID
     var targetUser = userService.GetUserById(id);
     if (targetUser == null)
         return Results.NotFound("Usuário não encontrado.");
 
-    // Funcionário ou Gerente não podem ver Administradores
-    if (user.Role?.Name != "Administrador" &&
-        targetUser.Role?.Name == "Administrador")
-        return Results.Forbid();
+    if (user.Role?.Name == "Administrador")
+    {
+        // Se for Administrador, pode visualizar qualquer usuário
+        var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role?.Name ?? "");
+        return Results.Ok(response);
+    }
+    else if (user.Role?.Name == "Gerente")
+    {
+        // Gerente pode visualizar Gerentes e Funcionários, mas não Administradores
+        if (targetUser.Role?.Name == "Administrador")
+            return Results.Forbid();
 
-    // Mapeia para DTO
-    var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role?.Name ?? "");
-    return Results.Ok(response);
+        var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role?.Name ?? "");
+        return Results.Ok(response);
+    }
+    else
+    {
+        // Funcionário não pode visualizar ninguém
+        return Results.Forbid();
+    }
 })
 .WithSummary("Buscar usuário por ID")
-.WithDescription("Administrador pode buscar qualquer usuário. Gerente e Funcionário apenas não veem Administradores.")
+.WithDescription("Administrador vê todos. Gerente vê Gerentes e Funcionários (não Admin). Funcionário não vê ninguém.")
 .Produces<UserResponse>(200)
 .Produces(401)
 .Produces(403)
 .Produces(404);
-
 
 
 /// GET /users/by-email → Busca usuário pelo e-mail
 userGroup.MapGet("/by-email", (string email, HttpContext http, UserService userService, JwtService jwt) =>
 {
-    // Extrai o usuário autenticado
+    // Extrai o usuário autenticado a partir do token JWT
     var user = jwt.ExtractUserFromRequest(http);
     if (user == null)
         return Results.Unauthorized();
 
-    // Busca o usuário pelo e-mail
+    // Busca o usuário alvo pelo e-mail informado
     var targetUser = userService.GetUserByEmail(email);
     if (targetUser == null)
         return Results.NotFound("Usuário não encontrado.");
 
-    // Funcionário ou Gerente não podem ver Administradores
-    if (user.Role?.Name != "Administrador" &&
-        targetUser.Role?.Name == "Administrador")
-        return Results.Forbid();
+    if (user.Role?.Name == "Administrador")
+    {
+        // Se for Administrador, pode visualizar qualquer usuário
+        var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role?.Name ?? "");
+        return Results.Ok(response);
+    }
+    else if (user.Role?.Name == "Gerente")
+    {
+        // Gerente pode visualizar Gerentes e Funcionários, mas não Administradores
+        if (targetUser.Role?.Name == "Administrador")
+            return Results.Forbid();
 
-    // Mapeia para DTO
-    var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role?.Name ?? "");
-    return Results.Ok(response);
+        var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role?.Name ?? "");
+        return Results.Ok(response);
+    }
+    else
+    {
+        // Funcionário não pode visualizar ninguém
+        return Results.Forbid();
+    }
 })
 .WithSummary("Buscar usuário por e-mail")
-.WithDescription("Administrador pode buscar qualquer usuário. Gerente e Funcionário apenas não veem Administradores.")
+.WithDescription("Administrador vê todos. Gerente vê Gerentes e Funcionários (não Admin). Funcionário não vê ninguém.")
 .Produces<UserResponse>(200)
 .Produces(401)
 .Produces(403)
 .Produces(404);
+
 
 
 /// POST /users → Cria um novo usuário
