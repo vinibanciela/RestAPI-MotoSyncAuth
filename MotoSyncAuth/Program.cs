@@ -71,20 +71,24 @@ authGroup.MapPost("/login", (LoginRequest request, UserService userService, JwtS
 })
 .WithSummary("Login do usuário")
 .WithDescription("Autentica o usuário e retorna um token JWT.")
-.Produces<AuthResponse>()   // retorno esperado
+.Produces<AuthResponse>(200)   // retorno esperado
 .Produces(401)              // retorno se falhar
 .RequireRateLimiting("default"); // aplica controle de frequência
 
 // GET /auth/me → Retorna dados do usuário autenticado via token
-authGroup.MapGet("/me", (HttpContext http, JwtService jwt, UserService userService) =>
+authGroup.MapGet("/me", (HttpContext http, JwtService jwt) =>
 {
     var user = jwt.ExtractUserFromRequest(http);
-    if (user == null) return Results.Unauthorized();
+    if (user == null)
+        return Results.Unauthorized();
+
     return Results.Ok(user);
 })
 .WithSummary("Dados do usuário logado")
-.Produces<User>()
+.WithDescription("Retorna os dados do usuário a partir do token JWT.")
+.Produces<User>(200)
 .Produces(401);
+
 
 // POST /auth/forgot-password → Gera token de redefinição de senha
 authGroup.MapPost("/forgot-password", (ForgotPasswordRequest request, UserService userService) =>
@@ -94,7 +98,7 @@ authGroup.MapPost("/forgot-password", (ForgotPasswordRequest request, UserServic
 })
 .WithSummary("Solicitação de redefinição de senha")
 .WithDescription("Gera um token de redefinição de senha para o e-mail informado.")
-.Produces<string>()
+.Produces<string>(200)
 .Produces(404);
 
 // POST /auth/reset-password → Redefine a senha com token
@@ -105,25 +109,34 @@ authGroup.MapPost("/reset-password", (ResetPasswordRequest request, UserService 
 })
 .WithSummary("Redefinir senha")
 .WithDescription("Permite redefinir a senha com um token válido.")
-.Produces<string>()
+.Produces<string>(200)
 .Produces(400);
 
 // POST /auth/refresh-token → Renova JWT com base no refresh token
 authGroup.MapPost("/refresh-token", (HttpContext http, UserService userService, JwtService jwt) =>
 {
+    var user = jwt.ExtractUserFromRequest(http);
+    if (user == null)
+        return Results.Unauthorized(); // Token JWT ausente ou inválido
+
     var refreshToken = http.Request.Headers["X-Refresh-Token"].ToString();
-    var user = userService.ValidateRefreshToken(refreshToken);
+    if (string.IsNullOrWhiteSpace(refreshToken))
+        return Results.BadRequest("Refresh token não fornecido.");
 
-    if (user == null || user.RefreshTokenExpiration < DateTime.UtcNow)
-        return Results.Unauthorized();
+    var validUser = userService.ValidateRefreshToken(refreshToken);
 
-    var newToken = jwt.GenerateToken(user);
-    return Results.Ok(new AuthResponse(user.Username, newToken));
+    if (validUser == null || validUser.RefreshTokenExpiration < DateTime.UtcNow)
+        return Results.Unauthorized(); // Refresh token inválido ou expirado
+
+    var newToken = jwt.GenerateToken(validUser);
+    return Results.Ok(new AuthResponse(validUser.Username, newToken));
 })
 .WithSummary("Renova o JWT com base no Refresh Token")
-.WithDescription("Valida o refresh token e retorna um novo token JWT válido.")
-.Produces<AuthResponse>()
-.Produces(401);
+.WithDescription("Valida o refresh token e o token atual e retorna um novo JWT válido.")
+.Produces<AuthResponse>(200)
+.Produces(401)
+.Produces(400);
+
 
 // -----------------------------------------------------------
 // ROTAS DE GESTÃO DE USUÁRIOS
@@ -131,88 +144,229 @@ authGroup.MapPost("/refresh-token", (HttpContext http, UserService userService, 
 
 var userGroup = app.MapGroup("/users").WithTags("Usuários");
 
+
 // GET /users → Lista todos os usuários
-userGroup.MapGet("/", (UserService userService) =>
+userGroup.MapGet("/", (HttpContext http, UserService userService, JwtService jwt) =>
 {
-    var users = userService.GetAllUsers()
-        .Select(u => new UserResponse(u.Id, u.Username, u.Email, u.Role?.Name ?? ""));
-    return Results.Ok(users);
+    // Extrai o usuário autenticado
+    var user = jwt.ExtractUserFromRequest(http);
+    if (user == null)
+        return Results.Unauthorized();
+
+    // Todos os cargos podem acessar, mas com níveis de visibilidade diferentes
+    var users = userService.GetAllUsers();
+
+    // Se não for Administrador, restringe visualização a Gerente e Funcionário
+    if (user.Role?.Name != "Administrador")
+    {
+        users = users.Where(u => u.Role?.Name == "Gerente" || u.Role?.Name == "Funcionario");
+    }
+
+    // Mapeia para DTO
+    var response = users.Select(u =>
+        new UserResponse(u.Id, u.Username, u.Email, u.Role?.Name ?? "")
+    );
+
+    return Results.Ok(response);
 })
 .WithSummary("Listar usuários")
-.WithDescription("Retorna todos os usuários do sistema.")
-.Produces<IEnumerable<UserResponse>>();
+.WithDescription("Administrador vê todos. Gerente e Funcionário veem apenas Gerentes e Funcionários.")
+.Produces<IEnumerable<UserResponse>>(200)
+.Produces(401);
 
-// GET /users/{id} → Busca um usuário por ID
-userGroup.MapGet("/{id}", (int id, UserService userService) =>
+
+// GET /users/{id} → Retorna um usuário específico por ID
+userGroup.MapGet("/{id}", (int id, HttpContext http, UserService userService, JwtService jwt) =>
 {
-    var user = userService.GetUserById(id);
-    return user is null 
-        ? Results.NotFound() 
-        : Results.Ok(new UserResponse(user.Id, user.Username, user.Email, user.Role?.Name ?? ""));
+    // Extrai o usuário autenticado
+    var user = jwt.ExtractUserFromRequest(http);
+    if (user == null)
+        return Results.Unauthorized();
+
+    // Busca o usuário alvo
+    var targetUser = userService.GetUserById(id);
+    if (targetUser == null)
+        return Results.NotFound("Usuário não encontrado.");
+
+    // Funcionário ou Gerente não podem ver Administradores
+    if (user.Role?.Name != "Administrador" &&
+        targetUser.Role?.Name == "Administrador")
+        return Results.Forbid();
+
+    // Mapeia para DTO
+    var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role?.Name ?? "");
+    return Results.Ok(response);
 })
 .WithSummary("Buscar usuário por ID")
-.Produces<UserResponse>()
+.WithDescription("Administrador pode buscar qualquer usuário. Gerente e Funcionário apenas não veem Administradores.")
+.Produces<UserResponse>(200)
+.Produces(401)
+.Produces(403)
 .Produces(404);
 
-// GET /users/by-email → Busca usuário pelo e-mail
-userGroup.MapGet("/by-email", (string email, UserService userService) =>
+
+
+/// GET /users/by-email → Busca usuário pelo e-mail
+userGroup.MapGet("/by-email", (string email, HttpContext http, UserService userService, JwtService jwt) =>
 {
-    var user = userService.GetUserByEmail(email);
-    return user is null 
-        ? Results.NotFound() 
-        : Results.Ok(new UserResponse(user.Id, user.Username, user.Email, user.Role?.Name ?? ""));
+    // Extrai o usuário autenticado
+    var user = jwt.ExtractUserFromRequest(http);
+    if (user == null)
+        return Results.Unauthorized();
+
+    // Busca o usuário pelo e-mail
+    var targetUser = userService.GetUserByEmail(email);
+    if (targetUser == null)
+        return Results.NotFound("Usuário não encontrado.");
+
+    // Funcionário ou Gerente não podem ver Administradores
+    if (user.Role?.Name != "Administrador" &&
+        targetUser.Role?.Name == "Administrador")
+        return Results.Forbid();
+
+    // Mapeia para DTO
+    var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role?.Name ?? "");
+    return Results.Ok(response);
 })
 .WithSummary("Buscar usuário por e-mail")
-.Produces<UserResponse>()
+.WithDescription("Administrador pode buscar qualquer usuário. Gerente e Funcionário apenas não veem Administradores.")
+.Produces<UserResponse>(200)
+.Produces(401)
+.Produces(403)
 .Produces(404);
 
-// GET /users/{id}/permissions → Lista as permissões do usuário
-userGroup.MapGet("/{id}/permissions", (int id, UserService userService) => 
+
+
+// GET /users/{id}/permissions → Lista as permissões do usuário por ID
+userGroup.MapGet("/{id}/permissions", (int id, HttpContext http, UserService userService, JwtService jwt) =>
 {
-    var permissions = userService.GetUserPermissions(id);
-    return permissions is null
-        ? Results.NotFound("Usuário ou permissões não encontradas.")
-        : Results.Ok(permissions);
+    // Extrai o usuário autenticado
+    var user = jwt.ExtractUserFromRequest(http);
+    if (user == null)
+        return Results.Unauthorized();
+
+    // Se não for administrador, só pode consultar as próprias permissões
+    if (user.Role?.Name != "Administrador" && user.Id != id)
+        return Results.Forbid();
+
+    // Busca o usuário alvo
+    var targetUser = userService.GetUserById(id);
+    if (targetUser == null || targetUser.Role?.Permissions == null)
+        return Results.NotFound("Usuário ou permissões não encontradas.");
+
+    // Retorna permissões do usuário alvo
+    var permissions = targetUser.Role.Permissions.Select(p => p.Name);
+    return Results.Ok(permissions);
 })
 .WithSummary("Permissões do usuário")
-.WithDescription("Retorna as permissões associadas ao usuário.")
-.Produces<IEnumerable<string>>()
+.WithDescription("Administrador pode consultar qualquer usuário. Gerente e Funcionário apenas as próprias permissões.")
+.Produces<IEnumerable<string>>(200)
+.Produces(401)
+.Produces(403)
 .Produces(404);
 
-// POST /users → Cria um novo usuário
-userGroup.MapPost("/", (CreateUserRequest request, UserService userService) =>
+
+
+/// POST /users → Cria um novo usuário
+userGroup.MapPost("/", (CreateUserRequest request, HttpContext http, UserService userService, JwtService jwt) =>
 {
-    var user = userService.CreateUser(request);
-    return user is null 
-        ? Results.BadRequest("Email já cadastrado.")
-        : Results.Ok(new UserResponse(user.Id, user.Username, user.Email, user.Role?.Name ?? ""));
+    // Extrai o usuário autenticado
+    var user = jwt.ExtractUserFromRequest(http);
+    if (user == null)
+        return Results.Unauthorized();
+
+    // Funcionário não pode criar ninguém
+    if (user.Role?.Name == "Funcionario")
+        return Results.Forbid();
+
+    // Gerente só pode criar Funcionários
+    if (user.Role?.Name == "Gerente" && request.RoleId != 3)
+        return Results.Forbid();
+
+    // Cria o novo usuário
+    var newUser = userService.CreateUser(request);
+    if (newUser == null)
+        return Results.BadRequest("E-mail já cadastrado.");
+
+    // Mapeia para DTO
+    var response = new UserResponse(newUser.Id, newUser.Username, newUser.Email, newUser.Role?.Name ?? "");
+    return Results.Created($"/users/{newUser.Id}", response);
 })
 .WithSummary("Criar usuário")
-.WithDescription("Cria um novo usuário com base no payload recebido.")
-.Produces<UserResponse>()
+.WithDescription("Administrador pode criar qualquer cargo. Gerente apenas Funcionários.")
+.Produces<UserResponse>(201)
+.Produces(401)
+.Produces(403)
 .Produces(400);
 
-// PUT /users/{id} → Atualiza os dados de um usuário
-userGroup.MapPut("/{id}", (int id, UpdateUserRequest request, UserService userService) =>
+
+/// PUT /users/{id} → Atualiza os dados de um usuário
+userGroup.MapPut("/{id}", (int id, UpdateUserRequest request, HttpContext http, UserService userService, JwtService jwt) =>
 {
+    // Extrai o usuário autenticado
+    var user = jwt.ExtractUserFromRequest(http);
+    if (user == null)
+        return Results.Unauthorized();
+
+    // Funcionário não pode atualizar ninguém
+    if (user.Role?.Name == "Funcionario")
+        return Results.Forbid();
+
+    // Busca o usuário alvo
+    var targetUser = userService.GetUserById(id);
+    if (targetUser == null)
+        return Results.NotFound("Usuário não encontrado.");
+
+    // Gerente só pode editar Funcionários
+    if (user.Role?.Name == "Gerente" && targetUser.Role?.Name != "Funcionario")
+        return Results.Forbid();
+
+    // Executa a atualização
     var success = userService.UpdateUser(id, request);
-    return success ? Results.Ok("Usuário atualizado.") : Results.NotFound("Usuário não encontrado.");
+    return success ? Results.Ok("Usuário atualizado.") : Results.BadRequest("Falha ao atualizar.");
 })
 .WithSummary("Atualizar usuário")
-.WithDescription("Atualiza parcialmente os dados do usuário.")
-.Produces<string>()
+.WithDescription("Administrador pode editar qualquer usuário. Gerente apenas Funcionários.")
+.Produces<string>(200)
+.Produces(400)
+.Produces(401)
+.Produces(403)
 .Produces(404);
 
+
 // DELETE /users/{id} → Remove um usuário do sistema
-userGroup.MapDelete("/{id}", (int id, UserService userService) =>
+userGroup.MapDelete("/{id}", (int id, HttpContext http, UserService userService, JwtService jwt) =>
 {
+    // Extrai o usuário autenticado
+    var user = jwt.ExtractUserFromRequest(http);
+    if (user == null)
+        return Results.Unauthorized();
+
+    // Funcionário não pode excluir ninguém
+    if (user.Role?.Name == "Funcionario")
+        return Results.Forbid();
+
+    // Busca o usuário alvo
+    var targetUser = userService.GetUserById(id);
+    if (targetUser == null)
+        return Results.NotFound("Usuário não encontrado.");
+
+    // Se for Gerente, só pode excluir Funcionários
+    if (user.Role?.Name == "Gerente" && targetUser.Role?.Name != "Funcionario")
+        return Results.Forbid();
+
+    // Executa a exclusão
     var success = userService.DeleteUser(id);
-    return success ? Results.Ok("Usuário excluído.") : Results.NotFound("Usuário não encontrado.");
+    return success ? Results.Ok("Usuário excluído.") : Results.BadRequest("Erro ao excluir usuário.");
 })
 .WithSummary("Deletar usuário")
-.WithDescription("Remove o usuário com base no ID informado.")
-.Produces<string>()
+.WithDescription("Administrador pode excluir qualquer usuário. Gerente apenas Funcionários.")
+.Produces<string>(200)
+.Produces(400)
+.Produces(401)
+.Produces(403)
 .Produces(404);
+
 
 // -----------------------------------------------------------
 // ROTAS DE GESTÃO DE CARGOS (ROLES)
@@ -220,9 +374,17 @@ userGroup.MapDelete("/{id}", (int id, UserService userService) =>
 
 var roleGroup = app.MapGroup("/roles").WithTags("Cargos");
 
-// GET /roles → Lista todas as roles
-roleGroup.MapGet("/", () =>
+
+/// GET /roles → Lista todas as roles
+roleGroup.MapGet("/", (HttpContext http, JwtService jwt) =>
 {
+    var user = jwt.ExtractUserFromRequest(http);
+    if (user == null)
+        return Results.Unauthorized();
+
+    if (user.Role?.Name != "Administrador")
+        return Results.Forbid();
+
     var roles = new List<RoleResponse>
     {
         new(1, "Administrador"),
@@ -232,12 +394,22 @@ roleGroup.MapGet("/", () =>
     return Results.Ok(roles);
 })
 .WithSummary("Listar roles")
-.WithDescription("Retorna todos os cargos disponíveis.")
-.Produces<IEnumerable<RoleResponse>>();
+.WithDescription("Apenas Administrador pode acessar.")
+.Produces<IEnumerable<RoleResponse>>(200)
+.Produces(401)
+.Produces(403);
+
 
 // GET /roles/{id} → Busca uma role por ID
-roleGroup.MapGet("/{id}", (int id) =>
+roleGroup.MapGet("/{id}", (int id, HttpContext http, JwtService jwt) =>
 {
+    var user = jwt.ExtractUserFromRequest(http);
+    if (user == null)
+        return Results.Unauthorized();
+
+    if (user.Role?.Name != "Administrador")
+        return Results.Forbid();
+
     var role = id switch
     {
         1 => new RoleResponse(1, "Administrador"),
@@ -245,43 +417,80 @@ roleGroup.MapGet("/{id}", (int id) =>
         3 => new RoleResponse(3, "Funcionario"),
         _ => null
     };
+
     return role is not null ? Results.Ok(role) : Results.NotFound("Role não encontrada.");
 })
 .WithSummary("Buscar role por ID")
-.Produces<RoleResponse>()
+.WithDescription("Apenas Administrador pode consultar cargos.")
+.Produces<RoleResponse>(200)
+.Produces(401)
+.Produces(403)
 .Produces(404);
 
+
 // POST /roles → Cria uma nova role
-roleGroup.MapPost("/", (CreateRoleRequest request) =>
+roleGroup.MapPost("/", (CreateRoleRequest request, HttpContext http, JwtService jwt) =>
 {
-    // Simulação de criação (sem persistência)
-    return Results.Created($"/roles/999", new RoleResponse(999, request.Name));
+    var user = jwt.ExtractUserFromRequest(http);
+    if (user == null)
+        return Results.Unauthorized();
+
+    if (user.Role?.Name != "Administrador")
+        return Results.Forbid();
+
+    // Simulação: cria uma role com ID fictício
+    return Results.Created("/roles/999", new RoleResponse(999, request.Name));
 })
 .WithSummary("Criar role")
-.WithDescription("Cria um novo cargo no sistema.")
-.Produces<RoleResponse>(201);
+.WithDescription("Apenas Administrador pode criar novos cargos.")
+.Produces<RoleResponse>(201)
+.Produces(401)
+.Produces(403);
+
 
 // PUT /roles/{id} → Atualiza uma role existente
-roleGroup.MapPut("/{id}", (int id, UpdateRoleRequest request) =>
+roleGroup.MapPut("/{id}", (int id, UpdateRoleRequest request, HttpContext http, JwtService jwt) =>
 {
+    var user = jwt.ExtractUserFromRequest(http);
+    if (user == null)
+        return Results.Unauthorized();
+
+    if (user.Role?.Name != "Administrador")
+        return Results.Forbid();
+
     return id is >= 1 and <= 3
         ? Results.Ok($"Role {id} atualizada para: {request.Name}")
         : Results.NotFound("Role não encontrada.");
 })
 .WithSummary("Atualizar role")
-.Produces<string>()
+.WithDescription("Apenas Administrador pode atualizar cargos.")
+.Produces<string>(200)
+.Produces(401)
+.Produces(403)
 .Produces(404);
 
-// DELETE /roles/{id} → Exclui uma role
-roleGroup.MapDelete("/{id}", (int id) =>
+
+/// DELETE /roles/{id} → Exclui uma role
+roleGroup.MapDelete("/{id}", (int id, HttpContext http, JwtService jwt) =>
 {
+    var user = jwt.ExtractUserFromRequest(http);
+    if (user == null)
+        return Results.Unauthorized();
+
+    if (user.Role?.Name != "Administrador")
+        return Results.Forbid();
+
     return id is >= 1 and <= 3
         ? Results.Ok($"Role {id} excluída com sucesso.")
         : Results.NotFound("Role não encontrada.");
 })
 .WithSummary("Excluir role")
-.Produces<string>()
+.WithDescription("Apenas Administrador pode excluir cargos.")
+.Produces<string>(200)
+.Produces(401)
+.Produces(403)
 .Produces(404);
+
 
 // -----------------------------------------------------------
 // ROTAS DE GESTÃO DE PERMISSÕES
@@ -290,8 +499,15 @@ roleGroup.MapDelete("/{id}", (int id) =>
 var permissionGroup = app.MapGroup("/permissions").WithTags("Permissões");
 
 // GET /permissions → Lista todas as permissões
-permissionGroup.MapGet("/", () =>
+permissionGroup.MapGet("/", (HttpContext http, JwtService jwt) =>
 {
+    var user = jwt.ExtractUserFromRequest(http);
+    if (user == null)
+        return Results.Unauthorized();
+
+    if (user.Role?.Name != "Administrador")
+        return Results.Forbid();
+
     var permissions = new List<PermissionResponse>
     {
         new(1, "All"),
@@ -301,12 +517,22 @@ permissionGroup.MapGet("/", () =>
     return Results.Ok(permissions);
 })
 .WithSummary("Listar permissões")
-.WithDescription("Retorna todas as permissões disponíveis.")
-.Produces<IEnumerable<PermissionResponse>>();
+.WithDescription("Apenas Administrador pode consultar permissões.")
+.Produces<IEnumerable<PermissionResponse>>(200)
+.Produces(401)
+.Produces(403);
+
 
 // GET /permissions/{id} → Busca permissão por ID
-permissionGroup.MapGet("/{id}", (int id) =>
+permissionGroup.MapGet("/{id}", (int id, HttpContext http, JwtService jwt) =>
 {
+    var user = jwt.ExtractUserFromRequest(http);
+    if (user == null)
+        return Results.Unauthorized();
+
+    if (user.Role?.Name != "Administrador")
+        return Results.Forbid();
+
     var permission = id switch
     {
         1 => new PermissionResponse(1, "All"),
@@ -314,43 +540,79 @@ permissionGroup.MapGet("/{id}", (int id) =>
         3 => new PermissionResponse(3, "ViewDashboard"),
         _ => null
     };
+
     return permission is not null ? Results.Ok(permission) : Results.NotFound("Permissão não encontrada.");
 })
 .WithSummary("Buscar permissão por ID")
-.Produces<PermissionResponse>()
+.WithDescription("Apenas Administrador pode consultar uma permissão específica.")
+.Produces<PermissionResponse>(200)
+.Produces(401)
+.Produces(403)
 .Produces(404);
 
+
 // POST /permissions → Cria nova permissão
-permissionGroup.MapPost("/", (CreatePermissionRequest request) =>
+permissionGroup.MapPost("/", (CreatePermissionRequest request, HttpContext http, JwtService jwt) =>
 {
-    // Simulação: cria uma permissão com ID fictício
+    var user = jwt.ExtractUserFromRequest(http);
+    if (user == null)
+        return Results.Unauthorized();
+
+    if (user.Role?.Name != "Administrador")
+        return Results.Forbid();
+
     return Results.Created("/permissions/999", new PermissionResponse(999, request.Name));
 })
 .WithSummary("Criar permissão")
-.WithDescription("Cria uma nova permissão no sistema.")
-.Produces<PermissionResponse>(201);
+.WithDescription("Apenas Administrador pode criar novas permissões.")
+.Produces<PermissionResponse>(201)
+.Produces(401)
+.Produces(403);
 
-// PUT /permissions/{id} → Atualiza permissão
-permissionGroup.MapPut("/{id}", (int id, UpdatePermissionRequest request) =>
+
+// PUT /permissions/{id} → Atualiza uma permissão existente
+permissionGroup.MapPut("/{id}", (int id, UpdatePermissionRequest request, HttpContext http, JwtService jwt) =>
 {
+    var user = jwt.ExtractUserFromRequest(http);
+    if (user == null)
+        return Results.Unauthorized();
+
+    if (user.Role?.Name != "Administrador")
+        return Results.Forbid();
+
     return id is >= 1 and <= 3
         ? Results.Ok($"Permissão {id} atualizada para: {request.Name}")
         : Results.NotFound("Permissão não encontrada.");
 })
 .WithSummary("Atualizar permissão")
-.Produces<string>()
+.WithDescription("Apenas Administrador pode atualizar permissões.")
+.Produces<string>(200)
+.Produces(401)
+.Produces(403)
 .Produces(404);
 
-// DELETE /permissions/{id} → Exclui permissão
-permissionGroup.MapDelete("/{id}", (int id) =>
+
+// DELETE /permissions/{id} → Exclui uma permissão
+permissionGroup.MapDelete("/{id}", (int id, HttpContext http, JwtService jwt) =>
 {
+    var user = jwt.ExtractUserFromRequest(http);
+    if (user == null)
+        return Results.Unauthorized();
+
+    if (user.Role?.Name != "Administrador")
+        return Results.Forbid();
+
     return id is >= 1 and <= 3
         ? Results.Ok($"Permissão {id} excluída com sucesso.")
         : Results.NotFound("Permissão não encontrada.");
 })
 .WithSummary("Excluir permissão")
-.Produces<string>()
+.WithDescription("Apenas Administrador pode excluir permissões.")
+.Produces<string>(200)
+.Produces(401)
+.Produces(403)
 .Produces(404);
+
 
 // 🚀 Inicializa o servidor
 app.Run();
