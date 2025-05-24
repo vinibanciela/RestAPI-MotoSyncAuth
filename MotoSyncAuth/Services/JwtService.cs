@@ -44,7 +44,7 @@ public class JwtService
         var tokenDescriptor = new SecurityTokenDescriptor
         {
             Subject = new ClaimsIdentity(claims),
-            Expires = DateTime.UtcNow.AddHours(1), // expira em 1h
+            Expires = DateTime.UtcNow.AddHours(1), // expira em 1hora
             SigningCredentials = credentials
         };
 

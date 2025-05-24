@@ -13,7 +13,34 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Swagger (documentação automática da API)
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    // Adiciona esquema de segurança JWT
+    options.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+    {
+        Description = "Insira o token JWT no formato: Bearer {token}",
+        Name = "Authorization",
+        In = Microsoft.OpenApi.Models.ParameterLocation.Header,
+        Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
+        Scheme = "Bearer"
+    });
+
+    options.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+    {
+        {
+            new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+            {
+                Reference = new Microsoft.OpenApi.Models.OpenApiReference
+                {
+                    Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            new string[] {}
+        }
+    });
+});
+
 
 // CORS: libera acesso de outras origens (ex: frontend em outra porta)
 builder.Services.AddCors(options =>
@@ -236,37 +263,6 @@ userGroup.MapGet("/by-email", (string email, HttpContext http, UserService userS
 .Produces(404);
 
 
-
-// GET /users/{id}/permissions → Lista as permissões do usuário por ID
-userGroup.MapGet("/{id}/permissions", (int id, HttpContext http, UserService userService, JwtService jwt) =>
-{
-    // Extrai o usuário autenticado
-    var user = jwt.ExtractUserFromRequest(http);
-    if (user == null)
-        return Results.Unauthorized();
-
-    // Se não for administrador, só pode consultar as próprias permissões
-    if (user.Role?.Name != "Administrador" && user.Id != id)
-        return Results.Forbid();
-
-    // Busca o usuário alvo
-    var targetUser = userService.GetUserById(id);
-    if (targetUser == null || targetUser.Role?.Permissions == null)
-        return Results.NotFound("Usuário ou permissões não encontradas.");
-
-    // Retorna permissões do usuário alvo
-    var permissions = targetUser.Role.Permissions.Select(p => p.Name);
-    return Results.Ok(permissions);
-})
-.WithSummary("Permissões do usuário")
-.WithDescription("Administrador pode consultar qualquer usuário. Gerente e Funcionário apenas as próprias permissões.")
-.Produces<IEnumerable<string>>(200)
-.Produces(401)
-.Produces(403)
-.Produces(404);
-
-
-
 /// POST /users → Cria um novo usuário
 userGroup.MapPost("/", (CreateUserRequest request, HttpContext http, UserService userService, JwtService jwt) =>
 {
@@ -486,128 +482,6 @@ roleGroup.MapDelete("/{id}", (int id, HttpContext http, JwtService jwt) =>
 })
 .WithSummary("Excluir role")
 .WithDescription("Apenas Administrador pode excluir cargos.")
-.Produces<string>(200)
-.Produces(401)
-.Produces(403)
-.Produces(404);
-
-
-// -----------------------------------------------------------
-// ROTAS DE GESTÃO DE PERMISSÕES
-// -----------------------------------------------------------
-
-var permissionGroup = app.MapGroup("/permissions").WithTags("Permissões");
-
-// GET /permissions → Lista todas as permissões
-permissionGroup.MapGet("/", (HttpContext http, JwtService jwt) =>
-{
-    var user = jwt.ExtractUserFromRequest(http);
-    if (user == null)
-        return Results.Unauthorized();
-
-    if (user.Role?.Name != "Administrador")
-        return Results.Forbid();
-
-    var permissions = new List<PermissionResponse>
-    {
-        new(1, "All"),
-        new(2, "ManageUsers"),
-        new(3, "ViewDashboard")
-    };
-    return Results.Ok(permissions);
-})
-.WithSummary("Listar permissões")
-.WithDescription("Apenas Administrador pode consultar permissões.")
-.Produces<IEnumerable<PermissionResponse>>(200)
-.Produces(401)
-.Produces(403);
-
-
-// GET /permissions/{id} → Busca permissão por ID
-permissionGroup.MapGet("/{id}", (int id, HttpContext http, JwtService jwt) =>
-{
-    var user = jwt.ExtractUserFromRequest(http);
-    if (user == null)
-        return Results.Unauthorized();
-
-    if (user.Role?.Name != "Administrador")
-        return Results.Forbid();
-
-    var permission = id switch
-    {
-        1 => new PermissionResponse(1, "All"),
-        2 => new PermissionResponse(2, "ManageUsers"),
-        3 => new PermissionResponse(3, "ViewDashboard"),
-        _ => null
-    };
-
-    return permission is not null ? Results.Ok(permission) : Results.NotFound("Permissão não encontrada.");
-})
-.WithSummary("Buscar permissão por ID")
-.WithDescription("Apenas Administrador pode consultar uma permissão específica.")
-.Produces<PermissionResponse>(200)
-.Produces(401)
-.Produces(403)
-.Produces(404);
-
-
-// POST /permissions → Cria nova permissão
-permissionGroup.MapPost("/", (CreatePermissionRequest request, HttpContext http, JwtService jwt) =>
-{
-    var user = jwt.ExtractUserFromRequest(http);
-    if (user == null)
-        return Results.Unauthorized();
-
-    if (user.Role?.Name != "Administrador")
-        return Results.Forbid();
-
-    return Results.Created("/permissions/999", new PermissionResponse(999, request.Name));
-})
-.WithSummary("Criar permissão")
-.WithDescription("Apenas Administrador pode criar novas permissões.")
-.Produces<PermissionResponse>(201)
-.Produces(401)
-.Produces(403);
-
-
-// PUT /permissions/{id} → Atualiza uma permissão existente
-permissionGroup.MapPut("/{id}", (int id, UpdatePermissionRequest request, HttpContext http, JwtService jwt) =>
-{
-    var user = jwt.ExtractUserFromRequest(http);
-    if (user == null)
-        return Results.Unauthorized();
-
-    if (user.Role?.Name != "Administrador")
-        return Results.Forbid();
-
-    return id is >= 1 and <= 3
-        ? Results.Ok($"Permissão {id} atualizada para: {request.Name}")
-        : Results.NotFound("Permissão não encontrada.");
-})
-.WithSummary("Atualizar permissão")
-.WithDescription("Apenas Administrador pode atualizar permissões.")
-.Produces<string>(200)
-.Produces(401)
-.Produces(403)
-.Produces(404);
-
-
-// DELETE /permissions/{id} → Exclui uma permissão
-permissionGroup.MapDelete("/{id}", (int id, HttpContext http, JwtService jwt) =>
-{
-    var user = jwt.ExtractUserFromRequest(http);
-    if (user == null)
-        return Results.Unauthorized();
-
-    if (user.Role?.Name != "Administrador")
-        return Results.Forbid();
-
-    return id is >= 1 and <= 3
-        ? Results.Ok($"Permissão {id} excluída com sucesso.")
-        : Results.NotFound("Permissão não encontrada.");
-})
-.WithSummary("Excluir permissão")
-.WithDescription("Apenas Administrador pode excluir permissões.")
 .Produces<string>(200)
 .Produces(401)
 .Produces(403)

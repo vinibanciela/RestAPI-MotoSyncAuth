@@ -44,10 +44,20 @@ public class UserService
     public User? ValidateUser(string email, string password)
     {
         var hash = HashPassword(password);
-        return _users.FirstOrDefault(u =>
+        var user = _users.FirstOrDefault(u =>
             u.Email.Equals(email, StringComparison.OrdinalIgnoreCase)
             && u.PasswordHash == hash);
+
+        if (user != null)
+        {
+            // Gera e atribui um Refresh Token com validade de 8 horas
+            user.RefreshToken = Guid.NewGuid().ToString();
+            user.RefreshTokenExpiration = DateTime.UtcNow.AddHours(8);
+        }
+
+        return user;
     }
+
 
     // Registra novo usuário com email/senha (/auth/register)
     public User? RegisterUser(string email, string password)
@@ -115,14 +125,7 @@ public class UserService
     // Retorna um usuário pelo email (/users/by-email)
     public User? GetUserByEmail(string email) =>
         _users.FirstOrDefault(u => u.Email.Equals(email, StringComparison.OrdinalIgnoreCase));
-
-    // Retorna permissões de um usuário (/users/{id}/permissions)
-    public IEnumerable<string>? GetUserPermissions(int id)
-    {
-        var user = GetUserById(id);
-        return user?.Role?.Permissions?.Select(p => p.Name);
-    }
-
+    
     // Cria um novo usuário (/users [POST])
     public User? CreateUser(CreateUserRequest request)
     {
@@ -139,7 +142,6 @@ public class UserService
             {
                 Id = request.RoleId,
                 Name = request.RoleId == 1 ? "Administrador" : request.RoleId == 2 ? "Gerente" : "Funcionario",
-                Permissions = request.RoleId == 1 ? new List<Permission> { new Permission { Id = 1, Name = "All" } } : null
             }
         };
 
@@ -165,7 +167,6 @@ public class UserService
             {
                 Id = request.RoleId.Value,
                 Name = request.RoleId == 1 ? "Administrador" : request.RoleId == 2 ? "Gerente" : "Funcionario",
-                Permissions = request.RoleId == 1 ? new List<Permission> { new Permission { Id = 1, Name = "All" } } : null
             };
         }
 
