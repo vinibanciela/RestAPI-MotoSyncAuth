@@ -108,6 +108,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 
+
 // -----------------------------------------------------------
 // ROTAS DE AUTENTICAÇÃO
 // -----------------------------------------------------------
@@ -130,8 +131,8 @@ authGroup.MapPost("/login", (LoginRequest request, UserService userService, JwtS
 })
 .WithSummary("Login do usuário")
 .WithDescription("Autentica o usuário e retorna um token JWT.")
-.Produces<AuthResponse>(StatusCodes.Status200OK)
-.Produces(StatusCodes.Status401Unauthorized)
+.Produces<AuthResponse>(200)
+.Produces(401)
 .RequireRateLimiting("default");
 
 
