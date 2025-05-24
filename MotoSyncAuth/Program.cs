@@ -89,18 +89,23 @@ var authGroup = app.MapGroup("/auth").WithTags("Autenticação");
 // POST /auth/login → Realiza login e retorna JWT
 authGroup.MapPost("/login", (LoginRequest request, UserService userService, JwtService jwt) =>
 {
+    //Valida se o usuário existe e se a senha está correta
     var user = userService.ValidateUser(request.Email, request.Password);
     if (user == null)
-        return Results.Unauthorized(); // email/senha inválidos
+        return Results.Unauthorized();
 
+    //Gera  token JWT para o usuário autenticado
     var token = jwt.GenerateToken(user);
+    
+    //Retorna o token e o nome do usuário
     return Results.Ok(new AuthResponse(user.Username, token));
 })
 .WithSummary("Login do usuário")
 .WithDescription("Autentica o usuário e retorna um token JWT.")
-.Produces<AuthResponse>(200)   // retorno esperado
-.Produces(401)              // retorno se falhar
-.RequireRateLimiting("default"); // aplica controle de frequência
+.Produces<AuthResponse>(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status401Unauthorized)
+.RequireRateLimiting("default");
+
 
 // GET /auth/me → Retorna dados do usuário autenticado via token
 authGroup.MapGet("/me", (HttpContext http, JwtService jwt) =>
@@ -137,31 +142,6 @@ authGroup.MapPost("/reset-password", (ResetPasswordRequest request, UserService 
 .WithSummary("Redefinir senha")
 .WithDescription("Permite redefinir a senha com um token válido.")
 .Produces<string>(200)
-.Produces(400);
-
-// POST /auth/refresh-token → Renova JWT com base no refresh token
-authGroup.MapPost("/refresh-token", (HttpContext http, UserService userService, JwtService jwt) =>
-{
-    var user = jwt.ExtractUserFromRequest(http);
-    if (user == null)
-        return Results.Unauthorized(); // Token JWT ausente ou inválido
-
-    var refreshToken = http.Request.Headers["X-Refresh-Token"].ToString();
-    if (string.IsNullOrWhiteSpace(refreshToken))
-        return Results.BadRequest("Refresh token não fornecido.");
-
-    var validUser = userService.ValidateRefreshToken(refreshToken);
-
-    if (validUser == null || validUser.RefreshTokenExpiration < DateTime.UtcNow)
-        return Results.Unauthorized(); // Refresh token inválido ou expirado
-
-    var newToken = jwt.GenerateToken(validUser);
-    return Results.Ok(new AuthResponse(validUser.Username, newToken));
-})
-.WithSummary("Renova o JWT com base no Refresh Token")
-.WithDescription("Valida o refresh token e o token atual e retorna um novo JWT válido.")
-.Produces<AuthResponse>(200)
-.Produces(401)
 .Produces(400);
 
 

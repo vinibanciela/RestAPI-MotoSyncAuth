@@ -44,7 +44,7 @@ public class JwtService
         var tokenDescriptor = new SecurityTokenDescriptor
         {
             Subject = new ClaimsIdentity(claims),
-            Expires = DateTime.UtcNow.AddHours(1), // expira em 1hora
+            Expires = DateTime.UtcNow.AddHours(4), // expira em 4horas
             SigningCredentials = credentials
         };
 
@@ -56,31 +56,39 @@ public class JwtService
     // Extrai os dados do usuário a partir do token JWT presente no header da requisição
     public User? ExtractUserFromRequest(HttpContext context)
     {
-        // Pega o cabeçalho Authorization: Bearer <token>
+        // Obtém o cabeçalho Authorization da requisição HTTP
         var authHeader = context.Request.Headers.Authorization.ToString();
 
+        // Se o cabeçalho estiver vazio ou não começar com "Bearer ", retorna null (não autorizado)
         if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer "))
             return null;
 
-        // Remove "Bearer " e pega o token
+        // Extrai apenas o token, removendo "Bearer " do início
         var token = authHeader["Bearer ".Length..];
+
         var handler = new JwtSecurityTokenHandler();
 
         try
         {
-            // Lê o token JWT
-            var jwt = handler.ReadJwtToken(token);
+            // Define os parâmetros de validação do token
+            var validationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = false, // Não valida o emissor (Issuer)
+                ValidateAudience = false, // Não valida o público (Audience)
+                ValidateLifetime = true, // Valida a expiração do token
+                ValidateIssuerSigningKey = true, // Valida a assinatura do token
+                IssuerSigningKey = new SymmetricSecurityKey(_key) // Chave secreta
+            };
 
-            // Extrai as claims
-            var username = jwt.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Name)?.Value;
-            var email = jwt.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Email)?.Value;
-            var role = jwt.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Role)?.Value;
+            // Valida o token e extrai as claims (privilégios do usuário)
+            var principal = handler.ValidateToken(token, validationParameters, out SecurityToken validatedToken);
 
-            // Se alguma claim for nula, retorna null
-            if (username == null || email == null || role == null)
-                return null;
+            // Extrai os dados (claims) do token válido
+            var username = principal.FindFirst(ClaimTypes.Name)?.Value ?? "";
+            var email = principal.FindFirst(ClaimTypes.Email)?.Value ?? "";
+            var role = principal.FindFirst(ClaimTypes.Role)?.Value ?? "";
 
-            // Retorna um objeto User preenchido com os dados do token
+            // Retorna um objeto User preenchido com os dados extraídos do token
             return new User
             {
                 Username = username,
@@ -90,7 +98,7 @@ public class JwtService
         }
         catch
         {
-            // Token inválido
+            // Se o token for inválido ou expirado, retorna null (não autorizado)
             return null;
         }
     }

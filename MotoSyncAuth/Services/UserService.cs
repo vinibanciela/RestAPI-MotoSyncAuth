@@ -47,45 +47,10 @@ public class UserService
         var user = _users.FirstOrDefault(u =>
             u.Email.Equals(email, StringComparison.OrdinalIgnoreCase)
             && u.PasswordHash == hash);
-
-        if (user != null)
-        {
-            // Gera e atribui um Refresh Token com validade de 8 horas
-            user.RefreshToken = Guid.NewGuid().ToString();
-            user.RefreshTokenExpiration = DateTime.UtcNow.AddHours(8);
-        }
-
         return user;
     }
-
-
-    // Registra novo usuário com email/senha (/auth/register)
-    public User? RegisterUser(string email, string password)
-    {
-        if (_users.Any(u => u.Email.Equals(email, StringComparison.OrdinalIgnoreCase)))
-            return null;
-
-        var newUser = new User
-        {
-            Id = _nextId++,
-            Username = email.Split('@')[0],
-            Email = email,
-            PasswordHash = HashPassword(password),
-            Role = new Role { Id = 3, Name = "Funcionario" } // Default: Funcionario
-        };
-
-        _users.Add(newUser);
-        return newUser;
-    }
-
+    
     // ------------------ Métodos de recuperação ------------------
-
-    // Valida refresh token (/auth/refresh-token)
-    public User? ValidateRefreshToken(string refreshToken) =>
-        _users.FirstOrDefault(u =>
-            u.RefreshToken == refreshToken &&
-            u.RefreshTokenExpiration.HasValue &&
-            u.RefreshTokenExpiration > DateTime.UtcNow);
 
     // Gera token de reset de senha (/auth/forgot-password)
     public bool GeneratePasswordResetToken(string email)
