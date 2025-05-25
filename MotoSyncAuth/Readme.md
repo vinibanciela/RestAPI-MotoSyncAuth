@@ -67,7 +67,7 @@ dotnet ef database update
 ```
 
 ```
-dotnet ru
+dotnet run
 ```
 
 ## 📂 Estrutura do Projeto
