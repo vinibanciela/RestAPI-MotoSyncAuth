@@ -84,6 +84,9 @@ dotnet run
 
 ## 📂 Estrutura de Endpoints
 
+# 📘 Documentação Interativa
+-  Disponível em `/swagger` (padrão ao rodar) ou `/redoc` caso preferir. 
+
 ### 🔐 Auth
 | Método | Rota                  | Descrição                            | Respostas HTTP                                   | Tipo de Acesso |
 | ------ | --------------------- | ------------------------------------ | ------------------------------------------------ | -------------- |
@@ -153,8 +156,6 @@ dotnet run
 - ² Gerente pode visualizar **usuários do mesmo nível ou inferior (Gerente e Funcionário)**.
 
 
-## 📘 Documentação Interativa
--  Disponível em `/swagger` (padrão ao rodar) ou `/redoc` caso preferir. 
 
 
 
