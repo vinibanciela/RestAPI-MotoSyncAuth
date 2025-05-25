@@ -54,12 +54,12 @@ Os scripts CLI Azure para criação da VM, abertura de portas (22 e 8080), outro
 
 ### 📥 Clone o repositório
 ```bash
-git clone <URL_DO_REPOSITORIO>
-cd Challenge2025/MotoSyncAuth
+git clone https://github.com/vinibanciela/RestAPI-MotoSyncAuth.git
+cd RestAPI-MotoSyncAuth-main\MotoSyncAuth
 
+dotnet ef database update
 
-
-
+dotnet run
 
 ## 📂 Estrutura do Projeto
 
