@@ -119,7 +119,7 @@ dotnet run
 
 
 
-## 🔒 Segurança
+
 - Criptografia de senha com BCrypt.
 - Rate limiting configurado para proteger contra flood de requisições.
 - Utiliza autenticação JWT com tokens válidos por 4 horas.
