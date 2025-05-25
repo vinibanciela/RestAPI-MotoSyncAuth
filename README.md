@@ -49,6 +49,7 @@ Os scripts CLI Azure para criação da VM, abertura de portas (22 e 8080), outro
 
 ### 📦 Pré-requisitos
 - [.NET SDK 8.0](https://dotnet.microsoft.com/en-us/download) instalado na máquina
+- Oracle database acesso com usuário, senha e servidor –(obs: já configurado no `appsettings.json` para testes)
 - Acesso ao terminal ou shell para execução dos comandos
 - (Opcional) Rider, VisualStudio ou outro editor para abrir o projeto
 
@@ -58,16 +59,23 @@ Os scripts CLI Azure para criação da VM, abertura de portas (22 e 8080), outro
 git clone https://github.com/vinibanciela/RestAPI-MotoSyncAuth.git
 ```
 
+Abre a pasta do projeto (atenção)
 ```
-cd RestAPI-MotoSyncAuth-main\MotoSyncAuth
+cd RestAPI-MotoSyncAuth-main\MotoSyncAuth\
 ```
+ Restaura os pacotes Nuget
+```
+dotnet restore
+```
+Aplicar as migrations (criar as tabelas no banco)
 ```
 dotnet ef database update
 ```
-
+Rodar o projeto
 ```
 dotnet run
 ```
+
 
 ## 📂 Estrutura do Projeto
 
@@ -75,6 +83,9 @@ dotnet run
 
 
 ## 📂 Estrutura de Endpoints
+
+# 📘 Documentação Interativa
+-  Disponível em `/swagger` (padrão ao rodar) ou `/redoc` caso preferir. 
 
 ### 🔐 Auth
 | Método | Rota                  | Descrição                            | Respostas HTTP                                   | Tipo de Acesso |
@@ -145,8 +156,6 @@ dotnet run
 - ² Gerente pode visualizar **usuários do mesmo nível ou inferior (Gerente e Funcionário)**.
 
 
-## 📘 Documentação Interativa
--  Disponível em `/swagger` (padrão ao rodar) ou `/redoc` caso preferir. 
 
 
 
