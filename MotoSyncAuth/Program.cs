@@ -6,9 +6,13 @@ using MotoSyncAuth.Models;
 using MotoSyncAuth.DTOs;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using MotoSyncAuth.Data;
+using Microsoft.EntityFrameworkCore;
+using BCrypt.Net;
 
 
 var builder = WebApplication.CreateBuilder(args);
+
 
 // -----------------------------------------------------------
 // REGISTRO DE SERVIÇOS
@@ -56,6 +60,7 @@ builder.Services.AddCors(options =>
     });
 });
 
+
 // Rate Limiting: evita flood de chamadas (ex: brute force no login)
 builder.Services.AddRateLimiter(opt =>
 {
@@ -68,9 +73,17 @@ builder.Services.AddRateLimiter(opt =>
     });
 });
 
+
 // Injeção de dependência dos nossos serviços customizados
 builder.Services.AddSingleton<JwtService>();    // Gera e valida tokens
-builder.Services.AddSingleton<UserService>();   // Simula usuários em memória
+//builder.Services.AddSingleton<UserService>();   // Simula usuários em memória (utilizado para testar API sem conexão oracle)
+
+
+//AppDbContext com a string de conexão Oracle
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseOracle(builder.Configuration.GetConnectionString("OracleConnection"))
+);
+
 
 // Configura Autenticação JWT (com chave secreta)
 builder.Services.AddAuthentication("Bearer")
@@ -90,11 +103,13 @@ builder.Services.AddAuthentication("Bearer")
         };
     });
 
+
 // Configura Autorização (para controle de acesso)
 builder.Services.AddAuthorization();
 
-
 var app = builder.Build();
+
+
 
 // -----------------------------------------------------------
 // MIDDLEWARES DO PIPELINE HTTP
@@ -102,6 +117,11 @@ var app = builder.Build();
 
 app.UseSwagger();
 app.UseSwaggerUI();
+app.UseReDoc(c =>
+{
+    c.RoutePrefix = "redoc"; // Acessar em /redoc
+    c.SpecUrl("/swagger/v1/swagger.json"); // Usa o mesmo JSON do Swagger
+});
 app.UseCors("AllowAll");
 app.UseRateLimiter(); // protege as rotas com limites de requisições
 app.UseAuthentication();
@@ -116,17 +136,23 @@ app.UseAuthorization();
 var authGroup = app.MapGroup("/auth").WithTags("Autenticação");
 
 // POST /auth/login → Realiza login e retorna JWT
-authGroup.MapPost("/login", (LoginRequest request, UserService userService, JwtService jwt) =>
+authGroup.MapPost("/login", async (LoginRequest request, AppDbContext dbContext, JwtService jwt) =>
 {
-    //Valida se o usuário existe e se a senha está correta
-    var user = userService.ValidateUser(request.Email, request.Password);
+    // Busca o usuário no banco pelo e-mail
+    var user = await dbContext.Usuarios
+        .Include(u => u.Role)
+        .FirstOrDefaultAsync(u => u.Email.ToLower() == request.Email.ToLower());
+
     if (user == null)
         return Results.Unauthorized();
 
-    //Gera  token JWT para o usuário autenticado
+    // Verifica o hash da senha
+    var hashedInput = SecurityService.HashPassword(request.Password);
+    if (user.PasswordHash != hashedInput)
+        return Results.Unauthorized();
+
+    // Gera token JWT
     var token = jwt.GenerateToken(user);
-    
-    //Retorna o token e o nome do usuário
     return Results.Ok(new AuthResponse(user.Username, token));
 })
 .WithSummary("Login do usuário")
@@ -137,9 +163,18 @@ authGroup.MapPost("/login", (LoginRequest request, UserService userService, JwtS
 
 
 // GET /auth/me → Retorna dados do usuário autenticado via token
-authGroup.MapGet("/me", (HttpContext http, JwtService jwt) =>
+authGroup.MapGet("/me", (HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
-    var user = jwt.ExtractUserFromRequest(http);
+    // Extrai os dados do token JWT
+    var tokenUser = jwt.ExtractUserFromRequest(http);
+    if (tokenUser == null)
+        return Results.Unauthorized();
+
+    // Busca o usuário no banco de dados pelo e-mail extraído do token
+    var user = dbContext.Usuarios
+        .Include(u => u.Role)
+        .FirstOrDefault(u => u.Email.ToLower() == tokenUser.Email.ToLower());
+
     if (user == null)
         return Results.Unauthorized();
 
@@ -152,26 +187,59 @@ authGroup.MapGet("/me", (HttpContext http, JwtService jwt) =>
 
 
 // POST /auth/forgot-password → Gera token de redefinição de senha
-authGroup.MapPost("/forgot-password", (ForgotPasswordRequest request, UserService userService) =>
+authGroup.MapPost("/forgot-password", (ForgotPasswordRequest request, AppDbContext dbContext) =>
 {
-    var result = userService.GeneratePasswordResetToken(request.Email);
-    return result ? Results.Ok("Token de redefinição gerado com sucesso.") : Results.NotFound("Usuário não encontrado.");
+    // Busca o usuário no banco de dados pelo e-mail informado
+    var user = dbContext.Usuarios.FirstOrDefault(u => u.Email.ToLower() == request.Email.ToLower());
+    if (user == null)
+        return Results.NotFound("Usuário não encontrado.");
+
+    // Gera um token e define a validade (15 minutos)
+    user.PasswordResetToken = Guid.NewGuid().ToString();
+    user.PasswordResetTokenExpiration = DateTime.UtcNow.AddMinutes(15);
+
+    // Salva as alterações no banco
+    dbContext.SaveChanges();
+
+    // OBS: Em uma aplicação real, esse token seria enviado por e-mail
+    return Results.Ok("Token de redefinição gerado com sucesso.");
 })
 .WithSummary("Solicitação de redefinição de senha")
 .WithDescription("Gera um token de redefinição de senha para o e-mail informado.")
 .Produces<string>(200)
 .Produces(404);
 
+
 // POST /auth/reset-password → Redefine a senha com token
-authGroup.MapPost("/reset-password", (ResetPasswordRequest request, UserService userService) =>
+authGroup.MapPost("/reset-password", (ResetPasswordRequest request, AppDbContext dbContext) =>
 {
-    var result = userService.ResetPassword(request.Token, request.NewPassword);
-    return result ? Results.Ok("Senha redefinida com sucesso.") : Results.BadRequest("Token inválido ou expirado.");
+    // Busca o usuário pelo token de redefinição de senha
+    var user = dbContext.Usuarios.FirstOrDefault(u =>
+        u.PasswordResetToken == request.Token &&
+        u.PasswordResetTokenExpiration.HasValue &&
+        u.PasswordResetTokenExpiration > DateTime.UtcNow
+    );
+
+    if (user == null)
+        return Results.BadRequest("Token inválido ou expirado.");
+
+    // Atualiza a senha com o hash da nova senha
+    user.PasswordHash = SecurityService.HashPassword(request.NewPassword);
+
+    // Limpa o token de redefinição e sua expiração
+    user.PasswordResetToken = null;
+    user.PasswordResetTokenExpiration = null;
+
+    // Salva as alterações no banco
+    dbContext.SaveChanges();
+
+    return Results.Ok("Senha redefinida com sucesso.");
 })
 .WithSummary("Redefinir senha")
 .WithDescription("Permite redefinir a senha com um token válido.")
 .Produces<string>(200)
 .Produces(400);
+
 
 
 // -----------------------------------------------------------
@@ -180,29 +248,29 @@ authGroup.MapPost("/reset-password", (ResetPasswordRequest request, UserService 
 
 var userGroup = app.MapGroup("/users").WithTags("Usuários");
 
-
 // GET /users → Lista todos os usuários
-userGroup.MapGet("/", (HttpContext http, UserService userService, JwtService jwt) =>
+userGroup.MapGet("/", (HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado a partir do token JWT
     var user = jwt.ExtractUserFromRequest(http);
     if (user == null)
         return Results.Unauthorized();
 
-    // Obtém todos os usuários do sistema
-    var users = userService.GetAllUsers();
+    // Obtém todos os usuários do banco com suas roles
+    var users = dbContext.Usuarios.Include(u => u.Role).AsQueryable();
 
     if (user.Role?.Name == "Administrador")
     {
         // Se for Administrador, retorna todos os usuários
-        var response = users.Select(u => new UserResponse(u.Id, u.Username, u.Email, u.Role?.Name ?? ""));
+        var response = users.Select(u => new UserResponse(u.Id, u.Username, u.Email, u.Role!.Name));
         return Results.Ok(response);
     }
     else if (user.Role?.Name == "Gerente")
     {
         // Se for Gerente, retorna apenas Gerentes e Funcionários
-        users = users.Where(u => u.Role?.Name == "Gerente" || u.Role?.Name == "Funcionario");
-        var response = users.Select(u => new UserResponse(u.Id, u.Username, u.Email, u.Role?.Name ?? ""));
+        var response = users
+            .Where(u => u.Role!.Name == "Gerente" || u.Role!.Name == "Funcionario")
+            .Select(u => new UserResponse(u.Id, u.Username, u.Email, u.Role!.Name));
         return Results.Ok(response);
     }
     else
@@ -219,22 +287,22 @@ userGroup.MapGet("/", (HttpContext http, UserService userService, JwtService jwt
 
 
 // GET /users/{id} → Retorna um usuário específico por ID
-userGroup.MapGet("/{id}", (int id, HttpContext http, UserService userService, JwtService jwt) =>
+userGroup.MapGet("/{id}", (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado a partir do token JWT
     var user = jwt.ExtractUserFromRequest(http);
     if (user == null)
         return Results.Unauthorized();
 
-    // Busca o usuário alvo pelo ID
-    var targetUser = userService.GetUserById(id);
+    // Busca o usuário alvo pelo ID no banco, incluindo a Role
+    var targetUser = dbContext.Usuarios.Include(u => u.Role).FirstOrDefault(u => u.Id == id);
     if (targetUser == null)
         return Results.NotFound("Usuário não encontrado.");
 
     if (user.Role?.Name == "Administrador")
     {
         // Se for Administrador, pode visualizar qualquer usuário
-        var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role?.Name ?? "");
+        var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role!.Name);
         return Results.Ok(response);
     }
     else if (user.Role?.Name == "Gerente")
@@ -243,7 +311,7 @@ userGroup.MapGet("/{id}", (int id, HttpContext http, UserService userService, Jw
         if (targetUser.Role?.Name == "Administrador")
             return Results.Forbid();
 
-        var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role?.Name ?? "");
+        var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role!.Name);
         return Results.Ok(response);
     }
     else
@@ -260,23 +328,23 @@ userGroup.MapGet("/{id}", (int id, HttpContext http, UserService userService, Jw
 .Produces(404);
 
 
-/// GET /users/by-email → Busca usuário pelo e-mail
-userGroup.MapGet("/by-email", (string email, HttpContext http, UserService userService, JwtService jwt) =>
+// GET /users/by-email → Busca usuário pelo e-mail
+userGroup.MapGet("/by-email", (string email, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado a partir do token JWT
     var user = jwt.ExtractUserFromRequest(http);
     if (user == null)
         return Results.Unauthorized();
 
-    // Busca o usuário alvo pelo e-mail informado
-    var targetUser = userService.GetUserByEmail(email);
+    // Busca o usuário alvo pelo e-mail no banco, incluindo a Role
+    var targetUser = dbContext.Usuarios.Include(u => u.Role).FirstOrDefault(u => u.Email == email);
     if (targetUser == null)
         return Results.NotFound("Usuário não encontrado.");
 
     if (user.Role?.Name == "Administrador")
     {
         // Se for Administrador, pode visualizar qualquer usuário
-        var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role?.Name ?? "");
+        var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role!.Name);
         return Results.Ok(response);
     }
     else if (user.Role?.Name == "Gerente")
@@ -285,7 +353,7 @@ userGroup.MapGet("/by-email", (string email, HttpContext http, UserService userS
         if (targetUser.Role?.Name == "Administrador")
             return Results.Forbid();
 
-        var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role?.Name ?? "");
+        var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role!.Name);
         return Results.Ok(response);
     }
     else
@@ -302,9 +370,8 @@ userGroup.MapGet("/by-email", (string email, HttpContext http, UserService userS
 .Produces(404);
 
 
-
-/// POST /users → Cria um novo usuário
-userGroup.MapPost("/", (CreateUserRequest request, HttpContext http, UserService userService, JwtService jwt) =>
+// POST /users → Cria um novo usuário
+userGroup.MapPost("/", (CreateUserRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado
     var user = jwt.ExtractUserFromRequest(http);
@@ -319,13 +386,23 @@ userGroup.MapPost("/", (CreateUserRequest request, HttpContext http, UserService
     if (user.Role?.Name == "Gerente" && request.RoleId != 3)
         return Results.Forbid();
 
-    // Cria o novo usuário
-    var newUser = userService.CreateUser(request);
-    if (newUser == null)
+    // Verifica se o e-mail já existe no banco
+    if (dbContext.Usuarios.Any(u => u.Email == request.Email))
         return Results.BadRequest("E-mail já cadastrado.");
 
-    // Mapeia para DTO
-    var response = new UserResponse(newUser.Id, newUser.Username, newUser.Email, newUser.Role?.Name ?? "");
+    // Cria um novo usuário com base na request
+    var newUser = new User
+    {
+        Username = request.Username,
+        Email = request.Email,
+        PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+        Role = dbContext.Roles.FirstOrDefault(r => r.Id == request.RoleId)
+    };
+
+    dbContext.Usuarios.Add(newUser);
+    dbContext.SaveChanges();
+
+    var response = new UserResponse(newUser.Id, newUser.Username, newUser.Email, newUser.Role!.Name);
     return Results.Created($"/users/{newUser.Id}", response);
 })
 .WithSummary("Criar usuário")
@@ -337,7 +414,7 @@ userGroup.MapPost("/", (CreateUserRequest request, HttpContext http, UserService
 
 
 /// PUT /users/{id} → Atualiza os dados de um usuário
-userGroup.MapPut("/{id}", (int id, UpdateUserRequest request, HttpContext http, UserService userService, JwtService jwt) =>
+userGroup.MapPut("/{id}", (int id, UpdateUserRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado
     var user = jwt.ExtractUserFromRequest(http);
@@ -348,8 +425,11 @@ userGroup.MapPut("/{id}", (int id, UpdateUserRequest request, HttpContext http, 
     if (user.Role?.Name == "Funcionario")
         return Results.Forbid();
 
-    // Busca o usuário alvo
-    var targetUser = userService.GetUserById(id);
+    // Busca o usuário alvo no banco de dados
+    var targetUser = dbContext.Usuarios
+        .Include(u => u.Role) // Inclui o Role associado
+        .FirstOrDefault(u => u.Id == id);
+
     if (targetUser == null)
         return Results.NotFound("Usuário não encontrado.");
 
@@ -357,21 +437,32 @@ userGroup.MapPut("/{id}", (int id, UpdateUserRequest request, HttpContext http, 
     if (user.Role?.Name == "Gerente" && targetUser.Role?.Name != "Funcionario")
         return Results.Forbid();
 
-    // Executa a atualização
-    var success = userService.UpdateUser(id, request);
-    return success ? Results.Ok("Usuário atualizado.") : Results.BadRequest("Falha ao atualizar.");
+    // Atualiza os campos permitidos
+    targetUser.Username = request.Username;
+    targetUser.Email = request.Email;
+    targetUser.PasswordHash = SecurityService.HashPassword(request.Password); // Atualiza a senha com hash seguro
+
+    // Atualiza o role, se fornecido
+    var newRole = dbContext.Roles.FirstOrDefault(r => r.Id == request.RoleId);
+    if (newRole != null)
+        targetUser.Role = newRole;
+
+    // Salva as alterações
+    dbContext.SaveChanges();
+
+    return Results.Ok("Usuário atualizado.");
 })
 .WithSummary("Atualizar usuário")
 .WithDescription("Administrador pode editar qualquer usuário. Gerente apenas Funcionários.")
 .Produces<string>(200)
-.Produces(400)
+.Produces(400) // Não usado diretamente, mas mantido para consistência
 .Produces(401)
 .Produces(403)
 .Produces(404);
 
 
 // DELETE /users/{id} → Remove um usuário do sistema
-userGroup.MapDelete("/{id}", (int id, HttpContext http, UserService userService, JwtService jwt) =>
+userGroup.MapDelete("/{id}", (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado
     var user = jwt.ExtractUserFromRequest(http);
@@ -382,8 +473,11 @@ userGroup.MapDelete("/{id}", (int id, HttpContext http, UserService userService,
     if (user.Role?.Name == "Funcionario")
         return Results.Forbid();
 
-    // Busca o usuário alvo
-    var targetUser = userService.GetUserById(id);
+    // Busca o usuário alvo no banco de dados
+    var targetUser = dbContext.Usuarios
+        .Include(u => u.Role) // Inclui o Role associado
+        .FirstOrDefault(u => u.Id == id);
+
     if (targetUser == null)
         return Results.NotFound("Usuário não encontrado.");
 
@@ -391,17 +485,20 @@ userGroup.MapDelete("/{id}", (int id, HttpContext http, UserService userService,
     if (user.Role?.Name == "Gerente" && targetUser.Role?.Name != "Funcionario")
         return Results.Forbid();
 
-    // Executa a exclusão
-    var success = userService.DeleteUser(id);
-    return success ? Results.Ok("Usuário excluído.") : Results.BadRequest("Erro ao excluir usuário.");
-})
+    // Remove o usuário
+    dbContext.Usuarios.Remove(targetUser);
+    dbContext.SaveChanges();
+
+    return Results.Ok("Usuário excluído.");
+}) 
 .WithSummary("Deletar usuário")
 .WithDescription("Administrador pode excluir qualquer usuário. Gerente apenas Funcionários.")
 .Produces<string>(200)
-.Produces(400)
+.Produces(400) // Não usado diretamente, mas mantido para consistência
 .Produces(401)
 .Produces(403)
 .Produces(404);
+
 
 
 // -----------------------------------------------------------
@@ -412,7 +509,7 @@ var roleGroup = app.MapGroup("/roles").WithTags("Cargos");
 
 
 /// GET /roles → Lista todas as roles
-roleGroup.MapGet("/", (HttpContext http, JwtService jwt) =>
+roleGroup.MapGet("/", (HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     var user = jwt.ExtractUserFromRequest(http);
     if (user == null)
@@ -421,23 +518,22 @@ roleGroup.MapGet("/", (HttpContext http, JwtService jwt) =>
     if (user.Role?.Name != "Administrador")
         return Results.Forbid();
 
-    var roles = new List<RoleResponse>
-    {
-        new(1, "Administrador"),
-        new(2, "Gerente"),
-        new(3, "Funcionario")
-    };
+    // Busca todas as roles no banco de dados
+    var roles = dbContext.Roles
+        .Select(r => new RoleResponse(r.Id, r.Name))
+        .ToList();
+
     return Results.Ok(roles);
 })
 .WithSummary("Listar roles")
-.WithDescription("Apenas Administrador pode acessar.")
+.WithDescription("Apenas Administrador pode acessar lista de cargos.")
 .Produces<IEnumerable<RoleResponse>>(200)
 .Produces(401)
 .Produces(403);
 
 
-// GET /roles/{id} → Busca uma role por ID
-roleGroup.MapGet("/{id}", (int id, HttpContext http, JwtService jwt) =>
+/// GET /roles/{id} → Busca uma role por ID
+roleGroup.MapGet("/{id}", (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     var user = jwt.ExtractUserFromRequest(http);
     if (user == null)
@@ -446,15 +542,15 @@ roleGroup.MapGet("/{id}", (int id, HttpContext http, JwtService jwt) =>
     if (user.Role?.Name != "Administrador")
         return Results.Forbid();
 
-    var role = id switch
-    {
-        1 => new RoleResponse(1, "Administrador"),
-        2 => new RoleResponse(2, "Gerente"),
-        3 => new RoleResponse(3, "Funcionario"),
-        _ => null
-    };
+    // Busca a role no banco de dados
+    var role = dbContext.Roles
+        .Where(r => r.Id == id)
+        .Select(r => new RoleResponse(r.Id, r.Name))
+        .FirstOrDefault();
 
-    return role is not null ? Results.Ok(role) : Results.NotFound("Role não encontrada.");
+    return role is not null 
+        ? Results.Ok(role) 
+        : Results.NotFound("Role não encontrada.");
 })
 .WithSummary("Buscar role por ID")
 .WithDescription("Apenas Administrador pode consultar cargos.")
@@ -464,8 +560,8 @@ roleGroup.MapGet("/{id}", (int id, HttpContext http, JwtService jwt) =>
 .Produces(404);
 
 
-// POST /roles → Cria uma nova role
-roleGroup.MapPost("/", (CreateRoleRequest request, HttpContext http, JwtService jwt) =>
+/// POST /roles → Cria uma nova role
+roleGroup.MapPost("/", async (CreateRoleRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     var user = jwt.ExtractUserFromRequest(http);
     if (user == null)
@@ -474,8 +570,17 @@ roleGroup.MapPost("/", (CreateRoleRequest request, HttpContext http, JwtService 
     if (user.Role?.Name != "Administrador")
         return Results.Forbid();
 
-    // Simulação: cria uma role com ID fictício
-    return Results.Created("/roles/999", new RoleResponse(999, request.Name));
+    // Cria uma nova role no banco de dados
+    var newRole = new Role
+    {
+        Name = request.Name
+    };
+
+    dbContext.Roles.Add(newRole);
+    await dbContext.SaveChangesAsync();
+
+    var response = new RoleResponse(newRole.Id, newRole.Name);
+    return Results.Created($"/roles/{newRole.Id}", response);
 })
 .WithSummary("Criar role")
 .WithDescription("Apenas Administrador pode criar novos cargos.")
@@ -484,8 +589,8 @@ roleGroup.MapPost("/", (CreateRoleRequest request, HttpContext http, JwtService 
 .Produces(403);
 
 
-// PUT /roles/{id} → Atualiza uma role existente
-roleGroup.MapPut("/{id}", (int id, UpdateRoleRequest request, HttpContext http, JwtService jwt) =>
+/// PUT /roles/{id} → Atualiza uma role existente
+roleGroup.MapPut("/{id}", async (int id, UpdateRoleRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     var user = jwt.ExtractUserFromRequest(http);
     if (user == null)
@@ -494,9 +599,17 @@ roleGroup.MapPut("/{id}", (int id, UpdateRoleRequest request, HttpContext http, 
     if (user.Role?.Name != "Administrador")
         return Results.Forbid();
 
-    return id is >= 1 and <= 3
-        ? Results.Ok($"Role {id} atualizada para: {request.Name}")
-        : Results.NotFound("Role não encontrada.");
+    // Busca a role pelo ID
+    var existingRole = await dbContext.Roles.FindAsync(id);
+    if (existingRole == null)
+        return Results.NotFound("Role não encontrada.");
+
+    // Atualiza o nome da role
+    existingRole.Name = request.Name;
+
+    await dbContext.SaveChangesAsync();
+
+    return Results.Ok($"Role {id} atualizada para: {request.Name}");
 })
 .WithSummary("Atualizar role")
 .WithDescription("Apenas Administrador pode atualizar cargos.")
@@ -507,7 +620,7 @@ roleGroup.MapPut("/{id}", (int id, UpdateRoleRequest request, HttpContext http, 
 
 
 /// DELETE /roles/{id} → Exclui uma role
-roleGroup.MapDelete("/{id}", (int id, HttpContext http, JwtService jwt) =>
+roleGroup.MapDelete("/{id}", async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     var user = jwt.ExtractUserFromRequest(http);
     if (user == null)
@@ -516,9 +629,16 @@ roleGroup.MapDelete("/{id}", (int id, HttpContext http, JwtService jwt) =>
     if (user.Role?.Name != "Administrador")
         return Results.Forbid();
 
-    return id is >= 1 and <= 3
-        ? Results.Ok($"Role {id} excluída com sucesso.")
-        : Results.NotFound("Role não encontrada.");
+    // Busca a role pelo ID
+    var existingRole = await dbContext.Roles.FindAsync(id);
+    if (existingRole == null)
+        return Results.NotFound("Role não encontrada.");
+
+    // Remove a role do contexto e salva as mudanças
+    dbContext.Roles.Remove(existingRole);
+    await dbContext.SaveChangesAsync();
+
+    return Results.Ok($"Role {id} excluída com sucesso.");
 })
 .WithSummary("Excluir role")
 .WithDescription("Apenas Administrador pode excluir cargos.")
