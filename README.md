@@ -76,12 +76,6 @@ Rodar o projeto
 dotnet run
 ```
 
-
-## 📂 Estrutura do Projeto
-
-
-
-
 ## 📂 Estrutura de Endpoints
 
 # 📘 Documentação Interativa
