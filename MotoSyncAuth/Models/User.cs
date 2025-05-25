@@ -10,7 +10,7 @@ public class User
 
     public string PasswordHash { get; set; } = string.Empty;
 
-    // Reset de senha (simulado, opcional para depois)
+    // Reset de senha
     public string? PasswordResetToken { get; set; }
     public DateTime? PasswordResetTokenExpiration { get; set; }
 

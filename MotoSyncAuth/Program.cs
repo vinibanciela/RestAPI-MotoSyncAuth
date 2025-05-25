@@ -115,17 +115,32 @@ var app = builder.Build();
 // MIDDLEWARES DO PIPELINE HTTP
 // -----------------------------------------------------------
 
-app.UseSwagger();
-app.UseSwaggerUI();
+
+// Adiciona a geração de documentação Swagger (OpenAPI) para a API - Disponibiliza o JSON com a especificação da API.
+app.UseSwagger(); 
+
+// Configura e habilita a interface do Swagger UI - Por padrão, fica disponível na URL /swagger.
+app.UseSwaggerUI(); 
+
+// Configura o ReDoc para documentação alternativa e mais elegante - acessível na rota /redoc, usando o mesmo JSON do Swagger.
 app.UseReDoc(c =>
 {
-    c.RoutePrefix = "redoc"; // Acessar em /redoc
-    c.SpecUrl("/swagger/v1/swagger.json"); // Usa o mesmo JSON do Swagger
+    c.RoutePrefix = "redoc"; // Define o prefixo para a rota (padrão: /redoc)
+    c.SpecUrl("/swagger/v1/swagger.json"); // Define o caminho para o arquivo JSON do Swagger
 });
+
+// Configura o middleware de CORS
 app.UseCors("AllowAll");
-app.UseRateLimiter(); // protege as rotas com limites de requisições
-app.UseAuthentication();
-app.UseAuthorization();
+
+// Aplica o controle de taxa de requisições (Rate Limiting)
+app.UseRateLimiter(); 
+
+// Habilita o middleware de autenticação JWT (Bearer Token) para proteger rotas privadas.
+app.UseAuthentication(); 
+
+// Habilita o middleware de autorização para verificar permissões com base no JWT extraído.
+app.UseAuthorization(); 
+
 
 
 
