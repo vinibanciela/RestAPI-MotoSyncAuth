@@ -1,6 +1,4 @@
-﻿version: "3.8"
-
-services:
+﻿services:
   postgres-db:
     image: postgres:15
     container_name: motosync-postgres-db
