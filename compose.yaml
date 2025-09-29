@@ -33,8 +33,8 @@ services:
       postgres-db: # <-- Condição de dependência alterada aqui
         condition: service_healthy
     environment:
-      - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__DefaultConnection=Host=postgres-db;Port=5432;Database=motosyncdb;Username=motosyncuser;Password=motosyncpassword
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__PostgresConnection=Host=postgres-db;Port=5432;Database=motosyncdb;Username=motosyncuser;Password=motosyncpassword
     networks:
       - motosync-network
     restart: on-failure # Adicionando restart on-failure para o motosync-api
