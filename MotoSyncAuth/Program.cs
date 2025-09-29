@@ -292,40 +292,66 @@ authGroup.MapPost("/reset-password", (ResetPasswordRequest request, AppDbContext
 
 var userGroup = app.MapGroup("/users").WithTags("Usuários");
 
-// GET /users → Lista todos os usuários
-userGroup.MapGet("/", (HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+/// GET /users → Lista todos os usuários
+userGroup.MapGet("/", async (
+    int pageNumber, // Parâmetro para o número da página
+    int pageSize,   // Parâmetro para o tamanho da página
+    HttpContext http, 
+    AppDbContext dbContext, 
+    JwtService jwt) =>
 {
+    // Validação básica para os parâmetros de paginação
+    if (pageNumber <= 0) pageNumber = 1;
+    if (pageSize <= 0) pageSize = 10; // Tamanho de página padrão
+
     // Extrai o usuário autenticado a partir do token JWT
-    var user = jwt.ExtractUserFromRequest(http);
+    var tokenUser = jwt.ExtractUserFromRequest(http);
+    if (tokenUser == null)
+        return Results.Unauthorized();
+
+    var user = await dbContext.Usuarios
+        .Include(u => u.Role)
+        .AsNoTracking()
+        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
+        
     if (user == null)
         return Results.Unauthorized();
 
-    // Obtém todos os usuários do banco com suas roles
-    var users = dbContext.Usuarios.Include(u => u.Role).AsQueryable();
+    // Inicia a consulta (IQueryable permite que o EF otimize o SQL)
+    IQueryable<User> query = dbContext.Usuarios.Include(u => u.Role);
 
-    if (user.Role?.Name == "Administrador")
+    if (user.Role?.Name == "Gerente")
     {
-        // Se for Administrador, retorna todos os usuários
-        var response = users.Select(u => new UserResponse(u.Id, u.Username, u.Email, u.Role!.Name));
-        return Results.Ok(response);
+        // Se for Gerente, filtra para ver apenas Gerentes e Funcionários
+        query = query.Where(u => u.Role!.Name == "Gerente" || u.Role!.Name == "Funcionario");
     }
-    else if (user.Role?.Name == "Gerente")
+    else if (user.Role?.Name != "Administrador")
     {
-        // Se for Gerente, retorna apenas Gerentes e Funcionários
-        var response = users
-            .Where(u => u.Role!.Name == "Gerente" || u.Role!.Name == "Funcionario")
-            .Select(u => new UserResponse(u.Id, u.Username, u.Email, u.Role!.Name));
-        return Results.Ok(response);
-    }
-    else
-    {
-        // Funcionário Administrativo não tem permissão para listar usuários
+        // Se não for Admin nem Gerente, não pode listar ninguém
         return Results.Forbid();
     }
+
+    // 1. Obter a contagem total de itens ANTES de paginar
+    var totalCount = await query.CountAsync();
+
+    // 2. Aplicar a paginação na consulta
+    var items = await query
+        .Skip((pageNumber - 1) * pageSize)
+        .Take(pageSize)
+        .Select(u => new UserResponse(u.Id, u.Username, u.Email, u.Role!.Name))
+        .ToListAsync();
+
+    // 3. Calcular o total de páginas
+    var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+    
+    // 4. Criar a resposta paginada
+    var pagedResponse = new PagedResponse<UserResponse>(items, pageNumber, pageSize, totalCount, totalPages);
+
+    return Results.Ok(pagedResponse);
 })
-.WithSummary("Listar usuários")
-.WithDescription("Administrador vê todos. Gerente vê Gerentes e Funcionários. Funcionário não vê ninguém.")
-.Produces<IEnumerable<UserResponse>>(200)
+.WithSummary("Listar usuários com paginação")
+.WithDescription("Administrador vê todos. Gerente vê Gerentes e Funcionários. Use os parâmetros 'pageNumber' e 'pageSize' para paginar.")
+.Produces<PagedResponse<UserResponse>>(200)
 .Produces(401)
 .Produces(403);
 
@@ -742,30 +768,50 @@ roleGroup.MapDelete("/{id}", async (int id, HttpContext http, AppDbContext dbCon
 // ROTAS DE AUDITORIA
 // -----------------------------------------------------------
 
-var auditGroup = app.MapGroup("/audits")
-    .WithTags("Auditoria")
-    .RequireAuthorization(); // Protege todo o grupo
-
-//GET /audits -> mostra os logs do sistema para auditoria
-auditGroup.MapGet("/", async (HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+auditGroup.MapGet("/", async (
+    int pageNumber, 
+    int pageSize,
+    HttpContext http, 
+    AppDbContext dbContext, 
+    JwtService jwt) =>
 {
+    if (pageNumber <= 0) pageNumber = 1;
+    if (pageSize <= 0) pageSize = 20; // Um tamanho padrão para logs
+
     var user = jwt.ExtractUserFromRequest(http);
-    if (user == null) return Results.Unauthorized();
+    if (user == null) 
+        return Results.Unauthorized();
 
-    // Apenas administradores podem ver os logs
-    if (user.Role?.Name != "Administrador") return Results.Forbid();
+    var userFromDb = await dbContext.Usuarios.Include(u => u.Role).AsNoTracking()
+        .FirstOrDefaultAsync(u => u.Email == user.Email);
 
-    var logs = await dbContext.AuditLogs
-        .OrderByDescending(a => a.Timestamp)
-        .Take(100)
-        .Select(a => new AuditLogResponse(a.Id, a.UserId, a.UserEmail, a.Action, a.Timestamp, a.Details)) // <--- AJUSTE AQUI
+    if (userFromDb?.Role?.Name != "Administrador") 
+        return Results.Forbid();
+    
+    // Consulta base
+    IQueryable<AuditLog> query = dbContext.AuditLogs.OrderByDescending(a => a.Timestamp);
+
+    // 1. Obter contagem total
+    var totalCount = await query.CountAsync();
+
+    // 2. Aplicar paginação e selecionar o DTO
+    var items = await query
+        .Skip((pageNumber - 1) * pageSize)
+        .Take(pageSize)
+        .Select(a => new AuditLogResponse(a.Id, a.UserId, a.UserEmail, a.Action, a.Timestamp, a.Details))
         .ToListAsync();
 
-    return Results.Ok(logs);
+    // 3. Calcular total de páginas
+    var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+
+    // 4. Criar a resposta paginada
+    var pagedResponse = new PagedResponse<AuditLogResponse>(items, pageNumber, pageSize, totalCount, totalPages);
+    
+    return Results.Ok(pagedResponse);
 })
-.WithSummary("Listar logs de auditoria")
-.WithDescription("Retorna os 100 eventos mais recentes do sistema. Acesso exclusivo para Administradores.")
-.Produces<IEnumerable<AuditLog>>(200)
+.WithSummary("Listar logs de auditoria com paginação")
+.WithDescription("Retorna os eventos do sistema de forma paginada. Acesso exclusivo para Administradores. Use 'pageNumber' e 'pageSize'.")
+.Produces<PagedResponse<AuditLogResponse>>(200)
 .Produces(401)
 .Produces(403);
 
