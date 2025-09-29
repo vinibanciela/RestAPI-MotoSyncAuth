@@ -744,6 +744,7 @@ var auditGroup = app.MapGroup("/audits")
     .WithTags("Auditoria")
     .RequireAuthorization(); // Protege todo o grupo
 
+//GET /audits -> mostra os logs do sistema para auditoria
 auditGroup.MapGet("/", async (HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     var user = jwt.ExtractUserFromRequest(http);
@@ -754,7 +755,8 @@ auditGroup.MapGet("/", async (HttpContext http, AppDbContext dbContext, JwtServi
 
     var logs = await dbContext.AuditLogs
         .OrderByDescending(a => a.Timestamp)
-        .Take(100) // Pega os 100 logs mais recentes para não sobrecarregar
+        .Take(100)
+        .Select(a => new AuditLogResponse(a.Id, a.UserId, a.UserEmail, a.Action, a.Timestamp, a.Details)) // <--- AJUSTE AQUI
         .ToListAsync();
 
     return Results.Ok(logs);
