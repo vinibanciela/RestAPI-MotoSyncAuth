@@ -96,6 +96,16 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 });
 
 
+// Pega a chave secreta da configuração
+var jwtSecret = builder.Configuration["JwtSettings:Secret"];
+if (string.IsNullOrEmpty(jwtSecret))
+{
+    // Lança um erro claro se a chave não estiver no appsettings.json
+    throw new InvalidOperationException("JWT Secret não está configurado no appsettings.json");
+}
+// Cria a chave de segurança uma vez, de forma segura
+var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret));
+
 // Configura Autenticação JWT (com chave secreta)
 builder.Services.AddAuthentication("Bearer")
     .AddJwtBearer("Bearer", options =>
@@ -108,9 +118,7 @@ builder.Services.AddAuthentication("Bearer")
             ValidateAudience = false,
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(builder.Configuration["JwtSettings:Secret"])
-            )
+            IssuerSigningKey = key // <-- Usa a chave já validada e segura
         };
     });
 
