@@ -13,6 +13,7 @@ namespace MotoSyncAuth.Data
         // Define os DbSets que representam as tabelas no banco
         public DbSet<User> Usuarios { get; set; }
         public DbSet<Role> Roles { get; set; }
+        public DbSet<AuditLog> AuditLogs { get; set; }
 
         // Configurações adicionais (mapeamento de tabelas, nomes, etc.)
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -22,6 +23,9 @@ namespace MotoSyncAuth.Data
 
             // Configura a tabela Role para mapear a entidade Role
             modelBuilder.Entity<Role>().ToTable("ROLE");
+
+            // Configura a tabela Role para mapear a entidade Role
+            modelBuilder.Entity<AuditLog>().ToTable("AUDIT_LOG");
 
             // Adicione outros mapeamentos se necessário, por exemplo:
             // modelBuilder.Entity<OutraEntidade>().ToTable("OUTRA_TABELA");
