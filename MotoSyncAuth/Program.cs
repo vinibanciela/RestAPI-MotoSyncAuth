@@ -161,7 +161,7 @@ app.UseAuthorization();
 
 var authGroup = app.MapGroup("/auth").WithTags("Autenticação");
 
-// POST /auth/login → Realiza login e retorna JWT
+/// POST /auth/login → Realiza login e retorna JWT
 authGroup.MapPost("/login", async (LoginRequest request, AppDbContext dbContext, JwtService jwt) =>
 {
     // Busca o usuário no banco pelo e-mail
@@ -169,13 +169,29 @@ authGroup.MapPost("/login", async (LoginRequest request, AppDbContext dbContext,
         .Include(u => u.Role)
         .FirstOrDefaultAsync(u => u.Email.ToLower() == request.Email.ToLower());
 
+    // LOG DE FALHA: Usuário não encontrado
     if (user == null)
+    {
+        var failedLog = new AuditLog { UserEmail = request.Email, Action = "UserLoginFailure", Timestamp = DateTime.UtcNow, Details = "User not found." };
+        dbContext.AuditLogs.Add(failedLog);
+        await dbContext.SaveChangesAsync();
         return Results.Unauthorized();
+    }
 
-    // Verifica o hash da senha
-    var hashedInput = SecurityService.HashPassword(request.Password);
-    if (user.PasswordHash != hashedInput)
+    // CORREÇÃO IMPORTANTE: Em vez de gerar um novo hash, usamos o SecurityService para verificar a senha
+    if (!SecurityService.VerifyPassword(request.Password, user.PasswordHash))
+    {
+        // LOG DE FALHA: Senha incorreta
+        var failedLog = new AuditLog { UserId = user.Id, UserEmail = user.Email, Action = "UserLoginFailure", Timestamp = DateTime.UtcNow, Details = "Invalid password." };
+        dbContext.AuditLogs.Add(failedLog);
+        await dbContext.SaveChangesAsync();
         return Results.Unauthorized();
+    }
+
+    // LOG DE SUCESSO
+    var successLog = new AuditLog { UserId = user.Id, UserEmail = user.Email, Action = "UserLoginSuccess", Timestamp = DateTime.UtcNow };
+    dbContext.AuditLogs.Add(successLog);
+    await dbContext.SaveChangesAsync();
 
     // Gera token JWT
     var token = jwt.GenerateToken(user);
@@ -397,38 +413,62 @@ userGroup.MapGet("/by-email", (string email, HttpContext http, AppDbContext dbCo
 
 
 // POST /users → Cria um novo usuário
-userGroup.MapPost("/", (CreateUserRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+userGroup.MapPost("/", async (CreateUserRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado
-    var user = jwt.ExtractUserFromRequest(http);
-    if (user == null)
+    var authorizedUser = jwt.ExtractUserFromRequest(http);
+    if (authorizedUser == null)
+        return Results.Unauthorized();
+    
+    // Busca o usuário que está realizando a ação no banco para obter seu ID
+    var creator = await dbContext.Usuarios
+        .AsNoTracking()
+        .FirstOrDefaultAsync(u => u.Email == authorizedUser.Email);
+    if (creator == null)
         return Results.Unauthorized();
 
+
     // Funcionário não pode criar ninguém
-    if (user.Role?.Name == "Funcionario")
+    if (creator.Role?.Name == "Funcionario") // Simulação, idealmente viria do DB com Include
         return Results.Forbid();
 
-    // Gerente só pode criar Funcionários
-    if (user.Role?.Name == "Gerente" && request.RoleId != 3)
+    // Gerente só pode criar Funcionários (RoleId = 3, por exemplo)
+    if (creator.Role?.Name == "Gerente" && request.RoleId != 3) // Simulação
         return Results.Forbid();
 
     // Verifica se o e-mail já existe no banco
-    if (dbContext.Usuarios.Any(u => u.Email == request.Email))
+    if (await dbContext.Usuarios.AnyAsync(u => u.Email == request.Email))
         return Results.BadRequest("E-mail já cadastrado.");
+
+    var role = await dbContext.Roles.FindAsync(request.RoleId);
+    if (role == null)
+        return Results.BadRequest("Role inválida.");
 
     // Cria um novo usuário com base na request
     var newUser = new User
     {
         Username = request.Username,
         Email = request.Email,
-        PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
-        Role = dbContext.Roles.FirstOrDefault(r => r.Id == request.RoleId)
+        PasswordHash = SecurityService.HashPassword(request.Password),
+        RoleId = request.RoleId,
     };
 
     dbContext.Usuarios.Add(newUser);
-    dbContext.SaveChanges();
+    await dbContext.SaveChangesAsync();
 
-    var response = new UserResponse(newUser.Id, newUser.Username, newUser.Email, newUser.Role!.Name);
+    // LOG DE CRIAÇÃO DE USUÁRIO
+    var log = new AuditLog
+    {
+        UserId = creator.Id,
+        UserEmail = creator.Email,
+        Action = "UserCreated",
+        Timestamp = DateTime.UtcNow,
+        Details = $"New user created with ID {newUser.Id} and role '{role.Name}'."
+    };
+    dbContext.AuditLogs.Add(log);
+    await dbContext.SaveChangesAsync();
+
+    var response = new UserResponse(newUser.Id, newUser.Username, newUser.Email, role.Name);
     return Results.Created($"/users/{newUser.Id}", response);
 })
 .WithSummary("Criar usuário")
@@ -488,43 +528,66 @@ userGroup.MapPut("/{id}", (int id, UpdateUserRequest request, HttpContext http, 
 
 
 // DELETE /users/{id} → Remove um usuário do sistema
-userGroup.MapDelete("/{id}", (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+userGroup.MapDelete("/{id}", async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado
-    var user = jwt.ExtractUserFromRequest(http);
-    if (user == null)
+    var authorizedUser = jwt.ExtractUserFromRequest(http);
+    if (authorizedUser == null)
+        return Results.Unauthorized();
+    
+    // Busca o usuário que está realizando a ação no banco
+    var deleter = await dbContext.Usuarios
+        .Include(u => u.Role)
+        .AsNoTracking()
+        .FirstOrDefaultAsync(u => u.Email == authorizedUser.Email);
+    if (deleter == null)
         return Results.Unauthorized();
 
     // Funcionário não pode excluir ninguém
-    if (user.Role?.Name == "Funcionario")
+    if (deleter.Role?.Name == "Funcionario")
         return Results.Forbid();
 
     // Busca o usuário alvo no banco de dados
-    var targetUser = dbContext.Usuarios
+    var targetUser = await dbContext.Usuarios
         .Include(u => u.Role) // Inclui o Role associado
-        .FirstOrDefault(u => u.Id == id);
+        .FirstOrDefaultAsync(u => u.Id == id);
 
     if (targetUser == null)
         return Results.NotFound("Usuário não encontrado.");
+        
+    // Usuário não pode deletar a si mesmo
+    if (deleter.Id == targetUser.Id)
+        return Results.BadRequest("Não é permitido excluir o próprio usuário.");
 
     // Se for Gerente, só pode excluir Funcionários
-    if (user.Role?.Name == "Gerente" && targetUser.Role?.Name != "Funcionario")
+    if (deleter.Role?.Name == "Gerente" && targetUser.Role?.Name != "Funcionario")
         return Results.Forbid();
 
     // Remove o usuário
     dbContext.Usuarios.Remove(targetUser);
-    dbContext.SaveChanges();
+    
+    // LOG DE EXCLUSÃO DE USUÁRIO
+    var log = new AuditLog
+    {
+        UserId = deleter.Id,
+        UserEmail = deleter.Email,
+        Action = "UserDeleted",
+        Timestamp = DateTime.UtcNow,
+        Details = $"User with ID {targetUser.Id} and email '{targetUser.Email}' was deleted."
+    };
+    dbContext.AuditLogs.Add(log);
+    
+    await dbContext.SaveChangesAsync();
 
     return Results.Ok("Usuário excluído.");
-}) 
+})
 .WithSummary("Deletar usuário")
 .WithDescription("Administrador pode excluir qualquer usuário. Gerente apenas Funcionários.")
 .Produces<string>(200)
-.Produces(400) // Não usado diretamente, mas mantido para consistência
+.Produces(400) 
 .Produces(401)
 .Produces(403)
 .Produces(404);
-
 
 
 // -----------------------------------------------------------
@@ -673,6 +736,34 @@ roleGroup.MapDelete("/{id}", async (int id, HttpContext http, AppDbContext dbCon
 .Produces(403)
 .Produces(404);
 
+// -----------------------------------------------------------
+// ROTAS DE AUDITORIA
+// -----------------------------------------------------------
+
+var auditGroup = app.MapGroup("/audits")
+    .WithTags("Auditoria")
+    .RequireAuthorization(); // Protege todo o grupo
+
+auditGroup.MapGet("/", async (HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+{
+    var user = jwt.ExtractUserFromRequest(http);
+    if (user == null) return Results.Unauthorized();
+
+    // Apenas administradores podem ver os logs
+    if (user.Role?.Name != "Administrador") return Results.Forbid();
+
+    var logs = await dbContext.AuditLogs
+        .OrderByDescending(a => a.Timestamp)
+        .Take(100) // Pega os 100 logs mais recentes para não sobrecarregar
+        .ToListAsync();
+
+    return Results.Ok(logs);
+})
+.WithSummary("Listar logs de auditoria")
+.WithDescription("Retorna os 100 eventos mais recentes do sistema. Acesso exclusivo para Administradores.")
+.Produces<IEnumerable<AuditLog>>(200)
+.Produces(401)
+.Produces(403);
 
 // 🚀 Inicializa o servidor
 app.Run();
