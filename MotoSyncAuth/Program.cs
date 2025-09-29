@@ -767,7 +767,10 @@ roleGroup.MapDelete("/{id}", async (int id, HttpContext http, AppDbContext dbCon
 // -----------------------------------------------------------
 // ROTAS DE AUDITORIA
 // -----------------------------------------------------------
-
+var auditGroup = app.MapGroup("/audits")
+    .WithTags("Auditoria")
+    .RequireAuthorization(); // Protege todo o grupo
+    
 auditGroup.MapGet("/", async (
     int pageNumber, 
     int pageSize,
