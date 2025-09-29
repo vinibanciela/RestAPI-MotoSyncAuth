@@ -43,8 +43,8 @@ namespace MotoSyncAuth.Data
             );
 
             // 2. Seed do Usuário Administrador Padrão: Cria um usuário admin para o primeiro acesso.
-            // A senha é hasheada usando o mesmo serviço da aplicação para garantir consistência e segurança.
-            var adminPasswordHash = SecurityService.HashPassword("Admin@123");
+            // A senha é hasheada usando um HASH ESTÁTICO.
+            const string staticAdminPasswordHash = "$2a$11$4nsFZ2KQaPd40Ri1xwSLXuvCnf4RtbfC2qIuweQmh/ByEKe80CvIy";
 
             modelBuilder.Entity<User>().HasData(
                 new User
@@ -52,7 +52,7 @@ namespace MotoSyncAuth.Data
                     Id = 1,
                     Username = "admin",
                     Email = "admin@motosync.com",
-                    PasswordHash = adminPasswordHash,
+                    PasswordHash = staticAdminPasswordHash, //usa o hash estático
                     RoleId = 1 // ID correspondente ao cargo "Administrador"
                 }
             );
