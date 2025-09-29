@@ -161,33 +161,34 @@ app.UseAuthorization();
 
 var authGroup = app.MapGroup("/auth").WithTags("Autenticação");
 
-/// POST /auth/login → Realiza login e retorna JWT
+// POST /auth/login → Realiza login e retorna JWT
 authGroup.MapPost("/login", async (LoginRequest request, AppDbContext dbContext, JwtService jwt) =>
 {
     // Busca o usuário no banco pelo e-mail
     var user = await dbContext.Usuarios
         .Include(u => u.Role)
         .FirstOrDefaultAsync(u => u.Email.ToLower() == request.Email.ToLower());
-
-    // LOG DE FALHA: Usuário não encontrado
-    if (user == null)
+        
+    // LÓGICA DE FALHA COM HATEOAS
+    // Se o usuário não existe ou a senha está incorreta, retorna um erro 401 estruturado.
+    if (user == null || !SecurityService.VerifyPassword(request.Password, user.PasswordHash))
     {
-        var failedLog = new AuditLog { UserEmail = request.Email, Action = "UserLoginFailure", Timestamp = DateTime.UtcNow, Details = "User not found." };
+        // Prepara a resposta de erro
+        var errorResponse = new ErrorResponse("E-mail ou senha inválidos.");
+        // Adiciona um link HATEOAS para guiar o cliente sobre a próxima ação possível (recuperar a senha).
+        errorResponse.Links.Add(new LinkDto("/auth/forgot-password", "forgot-password", "POST"));
+        
+        // Log de auditoria para a tentativa de falha
+        var logAction = user == null ? "User not found." : "Invalid password.";
+        var failedLog = new AuditLog { UserId = user?.Id, UserEmail = request.Email, Action = "UserLoginFailure", Timestamp = DateTime.UtcNow, Details = logAction };
         dbContext.AuditLogs.Add(failedLog);
         await dbContext.SaveChangesAsync();
-        return Results.Unauthorized();
+        
+        // Retorna um status 401 com o corpo de erro customizado
+        return Results.Json(errorResponse, statusCode: StatusCodes.Status401Unauthorized);
     }
 
-    // CORREÇÃO IMPORTANTE: Em vez de gerar um novo hash, usamos o SecurityService para verificar a senha
-    if (!SecurityService.VerifyPassword(request.Password, user.PasswordHash))
-    {
-        // LOG DE FALHA: Senha incorreta
-        var failedLog = new AuditLog { UserId = user.Id, UserEmail = user.Email, Action = "UserLoginFailure", Timestamp = DateTime.UtcNow, Details = "Invalid password." };
-        dbContext.AuditLogs.Add(failedLog);
-        await dbContext.SaveChangesAsync();
-        return Results.Unauthorized();
-    }
-
+    // LÓGICA DE SUCESSO (permanece a mesma)
     // LOG DE SUCESSO
     var successLog = new AuditLog { UserId = user.Id, UserEmail = user.Email, Action = "UserLoginSuccess", Timestamp = DateTime.UtcNow };
     dbContext.AuditLogs.Add(successLog);
@@ -200,7 +201,7 @@ authGroup.MapPost("/login", async (LoginRequest request, AppDbContext dbContext,
 .WithSummary("Login do usuário")
 .WithDescription("Autentica o usuário e retorna um token JWT.")
 .Produces<AuthResponse>(200)
-.Produces(401)
+.Produces<ErrorResponse>(401) // Atualiza a documentação do Swagger para o novo tipo de erro
 .RequireRateLimiting("default");
 
 
@@ -357,38 +358,55 @@ userGroup.MapGet("/", async (
 
 
 // GET /users/{id} → Retorna um usuário específico por ID
-userGroup.MapGet("/{id}", (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+userGroup.MapGet("/{id}", async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado a partir do token JWT
-    var user = jwt.ExtractUserFromRequest(http);
-    if (user == null)
+    var tokenUser = jwt.ExtractUserFromRequest(http);
+    if (tokenUser == null)
+        return Results.Unauthorized();
+
+    // Busca o usuário que está fazendo a requisição no banco para checar suas permissões reais
+    var requestingUser = await dbContext.Usuarios
+        .Include(u => u.Role)
+        .AsNoTracking()
+        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
+    if (requestingUser == null) 
         return Results.Unauthorized();
 
     // Busca o usuário alvo pelo ID no banco, incluindo a Role
-    var targetUser = dbContext.Usuarios.Include(u => u.Role).FirstOrDefault(u => u.Id == id);
+    var targetUser = await dbContext.Usuarios.Include(u => u.Role).FirstOrDefaultAsync(u => u.Id == id);
     if (targetUser == null)
         return Results.NotFound("Usuário não encontrado.");
 
-    if (user.Role?.Name == "Administrador")
-    {
-        // Se for Administrador, pode visualizar qualquer usuário
-        var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role!.Name);
-        return Results.Ok(response);
-    }
-    else if (user.Role?.Name == "Gerente")
-    {
-        // Gerente pode visualizar Gerentes e Funcionários, mas não Administradores
-        if (targetUser.Role?.Name == "Administrador")
-            return Results.Forbid();
+    // Mapeia os dados do usuário para o DTO de resposta
+    var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role!.Name);
 
-        var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role!.Name);
-        return Results.Ok(response);
-    }
-    else
+    // LÓGICA HATEOAS
+    // Adiciona o link "self" para o próprio recurso, que sempre está presente.
+    response.Links.Add(new LinkDto($"/users/{targetUser.Id}", "self", "GET"));
+
+    // Adiciona links de outras ações (atualizar, deletar) condicionalmente, com base nas permissões.
+    bool canModify = false;
+    if (requestingUser.Role?.Name == "Administrador")
     {
-        // Funcionário não pode visualizar ninguém
-        return Results.Forbid();
+        // Administrador pode modificar qualquer um, exceto a si mesmo (regra de negócio).
+        if(requestingUser.Id != targetUser.Id)
+            canModify = true;
     }
+    else if (requestingUser.Role?.Name == "Gerente")
+    {
+        // Gerente só pode modificar Funcionários.
+        if (targetUser.Role?.Name == "Funcionario")
+            canModify = true;
+    }
+
+    if (canModify)
+    {
+        response.Links.Add(new LinkDto($"/users/{targetUser.Id}", "update-user", "PUT"));
+        response.Links.Add(new LinkDto($"/users/{targetUser.Id}", "delete-user", "DELETE"));
+    }
+
+    return Results.Ok(response);
 })
 .WithSummary("Buscar usuário por ID")
 .WithDescription("Administrador vê todos. Gerente vê Gerentes e Funcionários (não Admin). Funcionário não vê ninguém.")
@@ -770,7 +788,8 @@ roleGroup.MapDelete("/{id}", async (int id, HttpContext http, AppDbContext dbCon
 var auditGroup = app.MapGroup("/audits")
     .WithTags("Auditoria")
     .RequireAuthorization(); // Protege todo o grupo
-    
+
+//GET /audits -> lista os logs do sistema para auditoria
 auditGroup.MapGet("/", async (
     int pageNumber, 
     int pageSize,
