@@ -15,7 +15,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Linha temporária para gerar o hash de senha para o admin seed
 // Utilizada uma vez, depois deixada comentada, para caso queira gerar outro hash de senha (estático) para o nosso admin seed
-Console.WriteLine($"Hash BCrypt para 'Admin@123': {SecurityService.HashPassword("Admin@123")}");
+//Console.WriteLine($"Hash BCrypt para 'Admin@123': {SecurityService.HashPassword("Admin@123")}");
 
 // -----------------------------------------------------------
 // REGISTRO DE SERVIÇOS
