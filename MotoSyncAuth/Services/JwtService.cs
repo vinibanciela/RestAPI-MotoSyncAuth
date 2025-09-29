@@ -18,7 +18,9 @@ public class JwtService
             throw new Exception("JWT Secret não configurado.");
         
         // Converte a chave em bytes para criar o token
-        _key = Encoding.ASCII.GetBytes(secret);
+        // Usamos o operador '!' (null-forgiving) para informar ao compilador que,
+        // devido à verificação acima, 'secret' nunca será nula aqui.
+        _key = Encoding.ASCII.GetBytes(secret!);
     }
 
     // Gera o token JWT com as informações do usuário
