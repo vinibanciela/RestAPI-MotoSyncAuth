@@ -5,6 +5,9 @@
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
 WORKDIR /app
 
+# Instala o curl para ser usado no Health Check
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
 # Criar usuário sem privilégios administrativos
 RUN useradd -ms /bin/bash motosyncuser
 USER motosyncuser
@@ -14,6 +17,11 @@ ENV ASPNETCORE_ENVIRONMENT=Production
 
 # Expor porta padrão 8080
 EXPOSE 8080
+
+# Adiciona o Health Check para a própria aplicação
+# O Docker irá chamar a rota /healthz a cada 15s para verificar se a API está respondendo
+HEALTHCHECK --interval=15s --timeout=5s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8080/healthz || exit 1
 
 # Etapa build (SDK do .NET)
 # Esta etapa é responsável por compilar e publicar a aplicação

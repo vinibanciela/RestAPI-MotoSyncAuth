@@ -858,5 +858,8 @@ auditGroup.MapGet("/", async (
 .Produces(401)
 .Produces(403);
 
+// Rota para Health Check do Docker
+app.MapGet("/healthz", () => Results.Ok("Healthy")).ExcludeFromDescription();
+
 // 🚀 Inicializa o servidor
 app.Run();
