@@ -205,7 +205,7 @@ authGroup.MapPost("/login", async (LoginRequest request, AppDbContext dbContext,
 
 
 // GET /auth/me → Retorna dados do usuário autenticado via token
-authGroup.MapGet("/me", (HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+authGroup.MapGet("/me", async (HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     // Extrai os dados do token JWT
     var tokenUser = jwt.ExtractUserFromRequest(http);
@@ -213,18 +213,20 @@ authGroup.MapGet("/me", (HttpContext http, AppDbContext dbContext, JwtService jw
         return Results.Unauthorized();
 
     // Busca o usuário no banco de dados pelo e-mail extraído do token
-    var user = dbContext.Usuarios
+    var user = await dbContext.Usuarios
         .Include(u => u.Role)
-        .FirstOrDefault(u => u.Email.ToLower() == tokenUser.Email.ToLower());
+        .FirstOrDefaultAsync(u => u.Email.ToLower() == tokenUser.Email.ToLower());
 
     if (user == null)
         return Results.Unauthorized();
 
-    return Results.Ok(user);
+    // Mapeia para o DTO de resposta para não expor dados sensíveis
+    var response = new UserResponse(user.Id, user.Username, user.Email, user.Role!.Name);
+    return Results.Ok(response);
 })
 .WithSummary("Dados do usuário logado")
 .WithDescription("Retorna os dados do usuário a partir do token JWT.")
-.Produces<User>(200)
+.Produces<UserResponse>(200) // Atualiza o tipo de produção no Swagger
 .Produces(401);
 
 
