@@ -79,10 +79,21 @@ builder.Services.AddSingleton<JwtService>();    // Gera e valida tokens
 //builder.Services.AddSingleton<UserService>();   // Simula usuários em memória (utilizado para testar API sem conexão oracle)
 
 
-//AppDbContext com a string de conexão Oracle
+// AppDbContext com conexão para múltiplos provedores conforme o ambiente
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseOracle(builder.Configuration.GetConnectionString("OracleConnection"))
-);
+{
+    if (builder.Environment.IsDevelopment())
+    {
+        // Usa PostgreSQL em ambiente de desenvolvimento
+        options.UseNpgsql(builder.Configuration.GetConnectionString("PostgresConnection"));
+    }
+    else
+    {
+        // Usa SQL Server (Azure SQL) em qualquer outro ambiente (Produção)
+        // A Connection String será lida de uma variável de ambiente no Azure
+        options.UseSqlServer(builder.Configuration.GetConnectionString("AzureSqlConnection"));
+    }
+});
 
 
 // Configura Autenticação JWT (com chave secreta)
