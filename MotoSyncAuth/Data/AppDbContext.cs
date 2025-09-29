@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using MotoSyncAuth.Models; // Importa os Models que representam as tabelas
+using MotoSyncAuth.Services; // Importa o SecurityService para hashear a senha padrão
 
 namespace MotoSyncAuth.Data
 {
@@ -18,6 +19,9 @@ namespace MotoSyncAuth.Data
         // Configurações adicionais (mapeamento de tabelas, nomes, etc.)
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
+            // É importante chamar o método base primeiro para garantir que as configurações padrão sejam aplicadas.
+            base.OnModelCreating(modelBuilder);
+
             // Configura a tabela Usuario para mapear a entidade Usuario
             modelBuilder.Entity<User>().ToTable("USUARIO");
 
@@ -27,10 +31,32 @@ namespace MotoSyncAuth.Data
             // Configura a tabela Role para mapear a entidade Role
             modelBuilder.Entity<AuditLog>().ToTable("AUDIT_LOG");
 
-            // Adicione outros mapeamentos se necessário, por exemplo:
-            // modelBuilder.Entity<OutraEntidade>().ToTable("OUTRA_TABELA");
+            // --- INÍCIO DO CÓDIGO DE DATA SEEDING ---
+            // Esta seção é usada para "semear" o banco de dados com dados iniciais essenciais
+            // sempre que uma nova migração for aplicada, garantindo um estado inicial consistente.
 
-            base.OnModelCreating(modelBuilder);
+            // 1. Seed dos Cargos (Roles): Cria os cargos padrão do sistema.
+            modelBuilder.Entity<Role>().HasData(
+                new Role { Id = 1, Name = "Administrador" },
+                new Role { Id = 2, Name = "Gerente" },
+                new Role { Id = 3, Name = "Funcionario" }
+            );
+
+            // 2. Seed do Usuário Administrador Padrão: Cria um usuário admin para o primeiro acesso.
+            // A senha é hasheada usando o mesmo serviço da aplicação para garantir consistência e segurança.
+            var adminPasswordHash = SecurityService.HashPassword("Admin@123");
+
+            modelBuilder.Entity<User>().HasData(
+                new User
+                {
+                    Id = 1,
+                    Username = "admin",
+                    Email = "admin@motosync.com",
+                    PasswordHash = adminPasswordHash,
+                    RoleId = 1 // ID correspondente ao cargo "Administrador"
+                }
+            );
+            // --- FIM DO CÓDIGO DE DATA SEEDING ---
         }
     }
 }
