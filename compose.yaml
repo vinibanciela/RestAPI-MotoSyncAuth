@@ -1,0 +1,48 @@
+﻿version: "3.8"
+
+services:
+  postgres-db:
+    image: postgres:15
+    container_name: motosync-postgres-db
+    restart: always
+    environment:
+      POSTGRES_USER: motosyncuser
+      POSTGRES_PASSWORD: motosyncpassword
+      POSTGRES_DB: motosyncdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - motosync-network
+    healthcheck: # <-- Healthcheck adicionado aqui
+      test: ["CMD-SHELL", "pg_isready -U motosyncuser -d motosyncdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 30s # Adiciona um período de carência para o startup do DB
+
+  motosync-api:
+    build:
+      context: ./MotoSyncAuth
+      dockerfile: Dockerfile
+    container_name: motosync-api
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres-db: # <-- Condição de dependência alterada aqui
+        condition: service_healthy
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Host=postgres-db;Port=5432;Database=motosyncdb;Username=motosyncuser;Password=motosyncpassword
+    networks:
+      - motosync-network
+    restart: on-failure # Adicionando restart on-failure para o motosync-api
+
+volumes:
+  postgres-data:
+
+networks:
+  motosync-network:
+    name: motosync-network
+    driver: bridge
