@@ -1,2 +1,0 @@
-#!/bin/bash
-az login
