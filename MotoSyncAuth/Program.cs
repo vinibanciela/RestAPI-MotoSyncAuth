@@ -177,18 +177,10 @@ authGroup.MapPost("/login", async (LoginRequest request, AppDbContext dbContext,
         var errorResponse = new ErrorResponse("E-mail ou senha inválidos.");
         // Adiciona um link HATEOAS para guiar o cliente sobre a próxima ação possível (recuperar a senha).
         errorResponse.Links.Add(new LinkDto("/auth/forgot-password", "forgot-password", "POST"));
-        
-        // Log de auditoria para a tentativa de falha
-        var logAction = user == null ? "User not found." : "Invalid password.";
-        var failedLog = new AuditLog { UserId = user?.Id, UserEmail = request.Email, Action = "UserLoginFailure", Timestamp = DateTime.UtcNow, Details = logAction };
-        dbContext.AuditLogs.Add(failedLog);
-        await dbContext.SaveChangesAsync();
-        
         // Retorna um status 401 com o corpo de erro customizado
         return Results.Json(errorResponse, statusCode: StatusCodes.Status401Unauthorized);
     }
 
-    // LÓGICA DE SUCESSO (permanece a mesma)
     // LOG DE SUCESSO
     var successLog = new AuditLog { UserId = user.Id, UserEmail = user.Email, Action = "UserLoginSuccess", Timestamp = DateTime.UtcNow };
     dbContext.AuditLogs.Add(successLog);
@@ -214,15 +206,16 @@ authGroup.MapGet("/me", async (HttpContext http, AppDbContext dbContext, JwtServ
         return Results.Unauthorized();
 
     // Busca o usuário no banco de dados pelo e-mail extraído do token
-    var user = await dbContext.Usuarios
+    var requestingUser = await dbContext.Usuarios
         .Include(u => u.Role)
+        .AsNoTracking()
         .FirstOrDefaultAsync(u => u.Email.ToLower() == tokenUser.Email.ToLower());
 
-    if (user == null)
+    if (requestingUser == null)
         return Results.Unauthorized();
 
     // Mapeia para o DTO de resposta para não expor dados sensíveis
-    var response = new UserResponse(user.Id, user.Username, user.Email, user.Role!.Name);
+    var response = new UserResponse(requestingUser.Id, requestingUser.Username, requestingUser.Email, requestingUser.Role!.Name);
     return Results.Ok(response);
 })
 .WithSummary("Dados do usuário logado")
@@ -230,12 +223,14 @@ authGroup.MapGet("/me", async (HttpContext http, AppDbContext dbContext, JwtServ
 .Produces<UserResponse>(200) // Atualiza o tipo de produção no Swagger
 .Produces(401);
 
-
 // POST /auth/forgot-password → Gera token de redefinição de senha
 authGroup.MapPost("/forgot-password", (ForgotPasswordRequest request, AppDbContext dbContext) =>
 {
     // Busca o usuário no banco de dados pelo e-mail informado
-    var user = dbContext.Usuarios.FirstOrDefault(u => u.Email.ToLower() == request.Email.ToLower());
+    var user = dbContext.Usuarios
+        .FirstOrDefault(u => u.Email
+        .ToLower() == request.Email
+        .ToLower());
     if (user == null)
         return Results.NotFound("Usuário não encontrado.");
 
@@ -309,24 +304,23 @@ userGroup.MapGet("/", async (
     var tokenUser = jwt.ExtractUserFromRequest(http);
     if (tokenUser == null)
         return Results.Unauthorized();
-
-    var user = await dbContext.Usuarios
+    // Busca o usuário que está fazendo a requisição no banco para checar suas permissões reais
+    var requestingUser = await dbContext.Usuarios
         .Include(u => u.Role)
         .AsNoTracking()
         .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
-        
-    if (user == null)
+    if (requestingUser == null) 
         return Results.Unauthorized();
 
     // Inicia a consulta (IQueryable permite que o EF otimize o SQL)
     IQueryable<User> query = dbContext.Usuarios.Include(u => u.Role);
 
-    if (user.Role?.Name == "Gerente")
+    if (requestingUser.Role?.Name == "Gerente")
     {
         // Se for Gerente, filtra para ver apenas Gerentes e Funcionários
         query = query.Where(u => u.Role!.Name == "Gerente" || u.Role!.Name == "Funcionario");
     }
-    else if (user.Role?.Name != "Administrador")
+    else if (requestingUser.Role?.Name != "Administrador")
     {
         // Se não for Admin nem Gerente, não pode listar ninguém
         return Results.Forbid();
@@ -351,7 +345,7 @@ userGroup.MapGet("/", async (
     return Results.Ok(pagedResponse);
 })
 .WithSummary("Listar usuários com paginação")
-.WithDescription("Administrador vê todos. Gerente vê Gerentes e Funcionários. Use os parâmetros 'pageNumber' e 'pageSize' para paginar.")
+.WithDescription("Administrador vê todos. Gerente vê Gerentes e Funcionários. Usa os parâmetros 'pageNumber' e 'pageSize' para paginar.")
 .Produces<PagedResponse<UserResponse>>(200)
 .Produces(401)
 .Produces(403);
@@ -364,7 +358,6 @@ userGroup.MapGet("/{id}", async (int id, HttpContext http, AppDbContext dbContex
     var tokenUser = jwt.ExtractUserFromRequest(http);
     if (tokenUser == null)
         return Results.Unauthorized();
-
     // Busca o usuário que está fazendo a requisição no banco para checar suas permissões reais
     var requestingUser = await dbContext.Usuarios
         .Include(u => u.Role)
@@ -417,25 +410,32 @@ userGroup.MapGet("/{id}", async (int id, HttpContext http, AppDbContext dbContex
 
 
 // GET /users/by-email → Busca usuário pelo e-mail
-userGroup.MapGet("/by-email", (string email, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+userGroup.MapGet("/by-email", async (string email, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado a partir do token JWT
-    var user = jwt.ExtractUserFromRequest(http);
-    if (user == null)
+    var tokenUser = jwt.ExtractUserFromRequest(http);
+    if (tokenUser == null)
+        return Results.Unauthorized();
+    // Busca o usuário que está fazendo a requisição no banco para checar suas permissões reais
+    var requestingUser = await dbContext.Usuarios
+        .Include(u => u.Role)
+        .AsNoTracking()
+        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
+    if (requestingUser == null)
         return Results.Unauthorized();
 
     // Busca o usuário alvo pelo e-mail no banco, incluindo a Role
-    var targetUser = dbContext.Usuarios.Include(u => u.Role).FirstOrDefault(u => u.Email == email);
+    var targetUser = await dbContext.Usuarios.Include(u => u.Role).FirstOrDefaultAsync(u => u.Email == email);
     if (targetUser == null)
         return Results.NotFound("Usuário não encontrado.");
 
-    if (user.Role?.Name == "Administrador")
+    if (requestingUser.Role?.Name == "Administrador")
     {
         // Se for Administrador, pode visualizar qualquer usuário
         var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role!.Name);
         return Results.Ok(response);
     }
-    else if (user.Role?.Name == "Gerente")
+    else if (requestingUser.Role?.Name == "Gerente")
     {
         // Gerente pode visualizar Gerentes e Funcionários, mas não Administradores
         if (targetUser.Role?.Name == "Administrador")
@@ -461,34 +461,33 @@ userGroup.MapGet("/by-email", (string email, HttpContext http, AppDbContext dbCo
 // POST /users → Cria um novo usuário
 userGroup.MapPost("/", async (CreateUserRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
-    // Extrai o usuário autenticado
-    var authorizedUser = jwt.ExtractUserFromRequest(http);
-    if (authorizedUser == null)
+    // Extrai o usuário autenticado do token
+    var tokenUser = jwt.ExtractUserFromRequest(http);
+    if (tokenUser == null)
         return Results.Unauthorized();
-    
-    // Busca o usuário que está realizando a ação no banco para obter seu ID
-    var creator = await dbContext.Usuarios
+    // Busca o usuário que está realizando a ação no banco para checar suas permissões reais
+    var requestingUser = await dbContext.Usuarios
+        .Include(u => u.Role)
         .AsNoTracking()
-        .FirstOrDefaultAsync(u => u.Email == authorizedUser.Email);
-    if (creator == null)
+        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
+    if (requestingUser == null)
         return Results.Unauthorized();
-
 
     // Funcionário não pode criar ninguém
-    if (creator.Role?.Name == "Funcionario") // Simulação, idealmente viria do DB com Include
+    if (requestingUser.Role?.Name == "Funcionario")
         return Results.Forbid();
 
-    // Gerente só pode criar Funcionários (RoleId = 3, por exemplo)
-    if (creator.Role?.Name == "Gerente" && request.RoleId != 3) // Simulação
+    // Gerente só pode criar Funcionários (Exemplo: RoleId 3 = Funcionário)
+    var roleOfNewUser = await dbContext.Roles.FindAsync(request.RoleId);
+    if (roleOfNewUser == null)
+        return Results.BadRequest("Cargo inválido.");
+        
+    if (requestingUser.Role?.Name == "Gerente" && roleOfNewUser.Name != "Funcionario")
         return Results.Forbid();
 
     // Verifica se o e-mail já existe no banco
     if (await dbContext.Usuarios.AnyAsync(u => u.Email == request.Email))
         return Results.BadRequest("E-mail já cadastrado.");
-
-    var role = await dbContext.Roles.FindAsync(request.RoleId);
-    if (role == null)
-        return Results.BadRequest("Role inválida.");
 
     // Cria um novo usuário com base na request
     var newUser = new User
@@ -505,16 +504,16 @@ userGroup.MapPost("/", async (CreateUserRequest request, HttpContext http, AppDb
     // LOG DE CRIAÇÃO DE USUÁRIO
     var log = new AuditLog
     {
-        UserId = creator.Id,
-        UserEmail = creator.Email,
+        UserId = requestingUser.Id,
+        UserEmail = requestingUser.Email,
         Action = "UserCreated",
         Timestamp = DateTime.UtcNow,
-        Details = $"New user created with ID {newUser.Id} and role '{role.Name}'."
+        Details = $"New user created with ID {newUser.Id} and role '{roleOfNewUser.Name}'."
     };
     dbContext.AuditLogs.Add(log);
     await dbContext.SaveChangesAsync();
 
-    var response = new UserResponse(newUser.Id, newUser.Username, newUser.Email, role.Name);
+    var response = new UserResponse(newUser.Id, newUser.Username, newUser.Email, roleOfNewUser.Name);
     return Results.Created($"/users/{newUser.Id}", response);
 })
 .WithSummary("Criar usuário")
@@ -526,48 +525,57 @@ userGroup.MapPost("/", async (CreateUserRequest request, HttpContext http, AppDb
 
 
 /// PUT /users/{id} → Atualiza os dados de um usuário
-userGroup.MapPut("/{id}", (int id, UpdateUserRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+userGroup.MapPut("/{id}", async (int id, UpdateUserRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado
-    var user = jwt.ExtractUserFromRequest(http);
-    if (user == null)
+    var tokenUser = jwt.ExtractUserFromRequest(http);
+    if (tokenUser == null)
+        return Results.Unauthorized();
+    // Busca o usuário que está fazendo a requisição no banco para checar suas permissões reais
+    var requestingUser = await dbContext.Usuarios
+        .Include(u => u.Role)
+        .AsNoTracking()
+        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
+    if (requestingUser == null)
         return Results.Unauthorized();
 
     // Funcionário não pode atualizar ninguém
-    if (user.Role?.Name == "Funcionario")
+    if (requestingUser.Role?.Name == "Funcionario")
         return Results.Forbid();
 
-    // Busca o usuário alvo no banco de dados
-    var targetUser = dbContext.Usuarios
+    // Busca o usuário alvo no banco de dados pelo ID
+    var targetUser = await dbContext.Usuarios
         .Include(u => u.Role) // Inclui o Role associado
-        .FirstOrDefault(u => u.Id == id);
+        .FirstOrDefaultAsync(u => u.Id == id);
 
     if (targetUser == null)
         return Results.NotFound("Usuário não encontrado.");
 
     // Gerente só pode editar Funcionários
-    if (user.Role?.Name == "Gerente" && targetUser.Role?.Name != "Funcionario")
+    if (requestingUser.Role?.Name == "Gerente" && targetUser.Role?.Name != "Funcionario")
         return Results.Forbid();
 
     // Atualiza os campos permitidos
-    targetUser.Username = request.Username;
-    targetUser.Email = request.Email;
-    targetUser.PasswordHash = SecurityService.HashPassword(request.Password); // Atualiza a senha com hash seguro
+    if(request.Username is not null) targetUser.Username = request.Username;
+    if(request.Email is not null) targetUser.Email = request.Email;
+    if(request.Password is not null) targetUser.PasswordHash = SecurityService.HashPassword(request.Password);
 
     // Atualiza o role, se fornecido
-    var newRole = dbContext.Roles.FirstOrDefault(r => r.Id == request.RoleId);
-    if (newRole != null)
-        targetUser.Role = newRole;
-
+    if (request.RoleId is not null)
+    {
+        var newRole = await dbContext.Roles.FindAsync(request.RoleId);
+        if (newRole != null)
+            targetUser.RoleId = newRole.Id;
+    }
+    
     // Salva as alterações
-    dbContext.SaveChanges();
+    await dbContext.SaveChangesAsync();
 
     return Results.Ok("Usuário atualizado.");
 })
 .WithSummary("Atualizar usuário")
 .WithDescription("Administrador pode editar qualquer usuário. Gerente apenas Funcionários.")
 .Produces<string>(200)
-.Produces(400) // Não usado diretamente, mas mantido para consistência
 .Produces(401)
 .Produces(403)
 .Produces(404);
@@ -577,20 +585,19 @@ userGroup.MapPut("/{id}", (int id, UpdateUserRequest request, HttpContext http, 
 userGroup.MapDelete("/{id}", async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado
-    var authorizedUser = jwt.ExtractUserFromRequest(http);
-    if (authorizedUser == null)
+    var tokenUser = jwt.ExtractUserFromRequest(http);
+    if (tokenUser == null)
         return Results.Unauthorized();
-    
-    // Busca o usuário que está realizando a ação no banco
-    var deleter = await dbContext.Usuarios
+    // Busca o usuário que está fazendo a requisição no banco para checar suas permissões reais
+    var requestingUser = await dbContext.Usuarios
         .Include(u => u.Role)
         .AsNoTracking()
-        .FirstOrDefaultAsync(u => u.Email == authorizedUser.Email);
-    if (deleter == null)
+        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
+    if (requestingUser == null)
         return Results.Unauthorized();
-
+        
     // Funcionário não pode excluir ninguém
-    if (deleter.Role?.Name == "Funcionario")
+    if (requestingUser.Role?.Name == "Funcionario")
         return Results.Forbid();
 
     // Busca o usuário alvo no banco de dados
@@ -602,11 +609,11 @@ userGroup.MapDelete("/{id}", async (int id, HttpContext http, AppDbContext dbCon
         return Results.NotFound("Usuário não encontrado.");
         
     // Usuário não pode deletar a si mesmo
-    if (deleter.Id == targetUser.Id)
+    if (requestingUser.Id == targetUser.Id)
         return Results.BadRequest("Não é permitido excluir o próprio usuário.");
 
     // Se for Gerente, só pode excluir Funcionários
-    if (deleter.Role?.Name == "Gerente" && targetUser.Role?.Name != "Funcionario")
+    if (requestingUser.Role?.Name == "Gerente" && targetUser.Role?.Name != "Funcionario")
         return Results.Forbid();
 
     // Remove o usuário
@@ -615,8 +622,8 @@ userGroup.MapDelete("/{id}", async (int id, HttpContext http, AppDbContext dbCon
     // LOG DE EXCLUSÃO DE USUÁRIO
     var log = new AuditLog
     {
-        UserId = deleter.Id,
-        UserEmail = deleter.Email,
+        UserId = requestingUser.Id,
+        UserEmail = requestingUser.Email,
         Action = "UserDeleted",
         Timestamp = DateTime.UtcNow,
         Details = $"User with ID {targetUser.Id} and email '{targetUser.Email}' was deleted."
@@ -644,19 +651,21 @@ var roleGroup = app.MapGroup("/roles").WithTags("Cargos");
 
 
 /// GET /roles → Lista todas as roles
-roleGroup.MapGet("/", (HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+roleGroup.MapGet("/", async (HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
-    var user = jwt.ExtractUserFromRequest(http);
-    if (user == null)
-        return Results.Unauthorized();
+    var tokenUser = jwt.ExtractUserFromRequest(http);
+    if (tokenUser == null) return Results.Unauthorized();
 
-    if (user.Role?.Name != "Administrador")
+    var user = await dbContext.Usuarios.Include(u => u.Role)
+        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
+
+    if (user?.Role?.Name != "Administrador")
         return Results.Forbid();
 
     // Busca todas as roles no banco de dados
-    var roles = dbContext.Roles
+    var roles = await dbContext.Roles
         .Select(r => new RoleResponse(r.Id, r.Name))
-        .ToList();
+        .ToListAsync();
 
     return Results.Ok(roles);
 })
@@ -668,20 +677,22 @@ roleGroup.MapGet("/", (HttpContext http, AppDbContext dbContext, JwtService jwt)
 
 
 /// GET /roles/{id} → Busca uma role por ID
-roleGroup.MapGet("/{id}", (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+roleGroup.MapGet("/{id}", async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
-    var user = jwt.ExtractUserFromRequest(http);
-    if (user == null)
-        return Results.Unauthorized();
+    var tokenUser = jwt.ExtractUserFromRequest(http);
+    if (tokenUser == null) return Results.Unauthorized();
+    
+    var user = await dbContext.Usuarios.Include(u => u.Role)
+        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
 
-    if (user.Role?.Name != "Administrador")
+    if (user?.Role?.Name != "Administrador")
         return Results.Forbid();
 
     // Busca a role no banco de dados
-    var role = dbContext.Roles
+    var role = await dbContext.Roles
         .Where(r => r.Id == id)
         .Select(r => new RoleResponse(r.Id, r.Name))
-        .FirstOrDefault();
+        .FirstOrDefaultAsync();
 
     return role is not null 
         ? Results.Ok(role) 
@@ -698,18 +709,17 @@ roleGroup.MapGet("/{id}", (int id, HttpContext http, AppDbContext dbContext, Jwt
 /// POST /roles → Cria uma nova role
 roleGroup.MapPost("/", async (CreateRoleRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
-    var user = jwt.ExtractUserFromRequest(http);
-    if (user == null)
-        return Results.Unauthorized();
+    var tokenUser = jwt.ExtractUserFromRequest(http);
+    if (tokenUser == null) return Results.Unauthorized();
+    
+    var user = await dbContext.Usuarios.Include(u => u.Role)
+        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
 
-    if (user.Role?.Name != "Administrador")
+    if (user?.Role?.Name != "Administrador")
         return Results.Forbid();
 
     // Cria uma nova role no banco de dados
-    var newRole = new Role
-    {
-        Name = request.Name
-    };
+    var newRole = new Role { Name = request.Name };
 
     dbContext.Roles.Add(newRole);
     await dbContext.SaveChangesAsync();
@@ -727,11 +737,13 @@ roleGroup.MapPost("/", async (CreateRoleRequest request, HttpContext http, AppDb
 /// PUT /roles/{id} → Atualiza uma role existente
 roleGroup.MapPut("/{id}", async (int id, UpdateRoleRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
-    var user = jwt.ExtractUserFromRequest(http);
-    if (user == null)
-        return Results.Unauthorized();
+    var tokenUser = jwt.ExtractUserFromRequest(http);
+    if (tokenUser == null) return Results.Unauthorized();
 
-    if (user.Role?.Name != "Administrador")
+    var user = await dbContext.Usuarios.Include(u => u.Role)
+        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
+
+    if (user?.Role?.Name != "Administrador")
         return Results.Forbid();
 
     // Busca a role pelo ID
@@ -741,7 +753,6 @@ roleGroup.MapPut("/{id}", async (int id, UpdateRoleRequest request, HttpContext 
 
     // Atualiza o nome da role
     existingRole.Name = request.Name;
-
     await dbContext.SaveChangesAsync();
 
     return Results.Ok($"Role {id} atualizada para: {request.Name}");
@@ -757,11 +768,13 @@ roleGroup.MapPut("/{id}", async (int id, UpdateRoleRequest request, HttpContext 
 /// DELETE /roles/{id} → Exclui uma role
 roleGroup.MapDelete("/{id}", async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
-    var user = jwt.ExtractUserFromRequest(http);
-    if (user == null)
-        return Results.Unauthorized();
+    var tokenUser = jwt.ExtractUserFromRequest(http);
+    if (tokenUser == null) return Results.Unauthorized();
 
-    if (user.Role?.Name != "Administrador")
+    var user = await dbContext.Usuarios.Include(u => u.Role)
+        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
+
+    if (user?.Role?.Name != "Administrador")
         return Results.Forbid();
 
     // Busca a role pelo ID
@@ -832,7 +845,7 @@ auditGroup.MapGet("/", async (
     return Results.Ok(pagedResponse);
 })
 .WithSummary("Listar logs de auditoria com paginação")
-.WithDescription("Retorna os eventos do sistema de forma paginada. Acesso exclusivo para Administradores. Use 'pageNumber' e 'pageSize'.")
+.WithDescription("Retorna os eventos do sistema de forma paginada. Acesso exclusivo para Administradores. Usa 'pageNumber' e 'pageSize' para paginar.")
 .Produces<PagedResponse<AuditLogResponse>>(200)
 .Produces(401)
 .Produces(403);
