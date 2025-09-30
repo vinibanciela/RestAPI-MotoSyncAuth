@@ -38,10 +38,10 @@ RUN dotnet restore "MotoSyncAuth.csproj"
 COPY . .
 
 # 3) Construir (build) o projeto em modo Release
-RUN dotnet build "MotoSyncAuth.csproj" -c $BUILD_CONFIGURATION -o /app/build
+RUN dotnet build "MotoSyncAuth.csproj" -c "$BUILD_CONFIGURATION" -o /app/build
 
 # 4) Publicar (publish) a aplicação em /app/publish
-RUN dotnet publish "MotoSyncAuth.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "MotoSyncAuth.csproj" -c "$BUILD_CONFIGURATION" -o /app/publish /p:UseAppHost=false
 
 # Etapa final (Runtime puro, sem SDK, apenas para execução da aplicação)
 # Esta etapa é a imagem final e leve que será executada em produção.
