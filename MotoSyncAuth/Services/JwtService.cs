@@ -15,7 +15,7 @@ public class JwtService
     {
         var secret = config["JwtSettings:Secret"];
         if (string.IsNullOrEmpty(secret))
-            throw new Exception("JWT Secret não configurado.");
+            throw new InvalidOperationException("JWT Secret não configurado.");
         
         // Converte a chave em bytes para criar o token
         // Usamos o operador '!' (null-forgiving) para informar ao compilador que,
