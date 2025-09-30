@@ -131,12 +131,19 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
+// --- INÍCIO DO CÓDIGO PARA APLICAR MIGRATIONS NO STARTUP ---
+// Este bloco garante que o banco de dados seja atualizado com as últimas migrations toda vez que a aplicação for iniciada.
+// Na próxima sprint configurar no pipeline
 
+using (var scope = app.Services.CreateScope())
+{
+    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    dbContext.Database.Migrate(); //aplica migrations automaticamente
+}
 
 // -----------------------------------------------------------
 // MIDDLEWARES DO PIPELINE HTTP
 // -----------------------------------------------------------
-
 
 // Adiciona a geração de documentação Swagger (OpenAPI) para a API - Disponibiliza o JSON com a especificação da API.
 app.UseSwagger(); 
@@ -161,8 +168,7 @@ app.UseRateLimiter();
 app.UseAuthentication(); 
 
 // Habilita o middleware de autorização para verificar permissões com base no JWT extraído.
-app.UseAuthorization(); 
-
+app.UseAuthorization();
 
 
 
@@ -172,6 +178,7 @@ app.UseAuthorization();
 
 var authGroup = app.MapGroup("/auth").WithTags("Autenticação");
 
+
 // POST /auth/login → Realiza login e retorna JWT
 authGroup.MapPost("/login", async (LoginRequest request, AppDbContext dbContext, JwtService jwt) =>
 {
@@ -179,7 +186,7 @@ authGroup.MapPost("/login", async (LoginRequest request, AppDbContext dbContext,
     var user = await dbContext.Usuarios
         .Include(u => u.Role)
         .FirstOrDefaultAsync(u => u.Email.ToLower() == request.Email.ToLower());
-        
+
     // LÓGICA DE FALHA COM HATEOAS
     // Se o usuário não existe ou a senha está incorreta, retorna um erro 401 estruturado.
     if (user == null || !SecurityService.VerifyPassword(request.Password, user.PasswordHash))
@@ -233,6 +240,7 @@ authGroup.MapGet("/me", async (HttpContext http, AppDbContext dbContext, JwtServ
 .WithDescription("Retorna os dados do usuário a partir do token JWT.")
 .Produces<UserResponse>(200) // Atualiza o tipo de produção no Swagger
 .Produces(401);
+
 
 // POST /auth/forgot-password → Gera token de redefinição de senha
 authGroup.MapPost("/forgot-password", (ForgotPasswordRequest request, AppDbContext dbContext) =>
@@ -298,6 +306,7 @@ authGroup.MapPost("/reset-password", (ResetPasswordRequest request, AppDbContext
 // -----------------------------------------------------------
 
 var userGroup = app.MapGroup("/users").WithTags("Usuários");
+
 
 /// GET /users → Lista todos os usuários
 userGroup.MapGet("/", async (
@@ -658,6 +667,7 @@ userGroup.MapDelete(AppConstants.IdRouteParameter, async (int id, HttpContext ht
 .Produces(404);
 
 
+
 // -----------------------------------------------------------
 // ROTAS DE GESTÃO DE CARGOS (ROLES)
 // -----------------------------------------------------------
@@ -810,6 +820,8 @@ roleGroup.MapDelete(AppConstants.IdRouteParameter, async (int id, HttpContext ht
 .Produces(403)
 .Produces(404);
 
+
+
 // -----------------------------------------------------------
 // ROTAS DE AUDITORIA
 // -----------------------------------------------------------
@@ -864,6 +876,9 @@ auditGroup.MapGet("/", async (
 .Produces<PagedResponse<AuditLogResponse>>(200)
 .Produces(401)
 .Produces(403);
+
+
+
 
 // Rota para Health Check do Docker
 app.MapGet("/healthz", () => Results.Ok("Healthy")).ExcludeFromDescription();
