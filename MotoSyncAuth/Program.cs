@@ -312,7 +312,7 @@ authGroup.MapPost("/reset-password", (ResetPasswordRequest request, AppDbContext
 var userGroup = app.MapGroup("/users").WithTags("Usuários");
 
 
-/// GET /users → Lista todos os usuários
+// GET /users → Lista todos os usuários
 userGroup.MapGet("/", async (
     int pageNumber, // Parâmetro para o número da página
     int pageSize,   // Parâmetro para o tamanho da página
@@ -552,7 +552,7 @@ userGroup.MapPost("/", async (CreateUserRequest request, HttpContext http, AppDb
 .Produces(400);
 
 
-/// PUT /users/{id} → Atualiza os dados de um usuário
+// PUT /users/{id} → Atualiza os dados de um usuário
 userGroup.MapPut(AppConstants.IdRouteParameter, async (int id, UpdateUserRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado
@@ -679,7 +679,7 @@ userGroup.MapDelete(AppConstants.IdRouteParameter, async (int id, HttpContext ht
 var roleGroup = app.MapGroup("/roles").WithTags("Cargos");
 
 
-/// GET /roles → Lista todas as roles
+// GET /roles → Lista todas as roles
 roleGroup.MapGet("/", async (HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     var tokenUser = jwt.ExtractUserFromRequest(http);
@@ -705,7 +705,7 @@ roleGroup.MapGet("/", async (HttpContext http, AppDbContext dbContext, JwtServic
 .Produces(403);
 
 
-/// GET /roles/{id} → Busca uma role por ID
+// GET /roles/{id} → Busca uma role por ID
 roleGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     var tokenUser = jwt.ExtractUserFromRequest(http);
@@ -735,7 +735,7 @@ roleGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http,
 .Produces(404);
 
 
-/// POST /roles → Cria uma nova role
+// POST /roles → Cria uma nova role
 roleGroup.MapPost("/", async (CreateRoleRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     var tokenUser = jwt.ExtractUserFromRequest(http);
@@ -763,7 +763,7 @@ roleGroup.MapPost("/", async (CreateRoleRequest request, HttpContext http, AppDb
 .Produces(403);
 
 
-/// PUT /roles/{id} → Atualiza uma role existente
+// PUT /roles/{id} → Atualiza uma role existente
 roleGroup.MapPut(AppConstants.IdRouteParameter, async (int id, UpdateRoleRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     var tokenUser = jwt.ExtractUserFromRequest(http);
@@ -794,7 +794,7 @@ roleGroup.MapPut(AppConstants.IdRouteParameter, async (int id, UpdateRoleRequest
 .Produces(404);
 
 
-/// DELETE /roles/{id} → Exclui uma role
+// DELETE /roles/{id} → Exclui uma role
 roleGroup.MapDelete(AppConstants.IdRouteParameter, async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     var tokenUser = jwt.ExtractUserFromRequest(http);
