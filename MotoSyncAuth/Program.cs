@@ -365,7 +365,7 @@ userGroup.MapGet("/", async (
     return Results.Ok(pagedResponse);
 })
 .WithSummary("Listar usuários com paginação")
-.WithDescription("Administrador vê todos. Gerente vê Gerentes e Funcionários. Usa os parâmetros 'pageNumber' e 'pageSize' para paginar.")
+.WithDescription("Administrador vê todos. Gerente vê Gerentes e Funcionários (não Admin). Usa os parâmetros 'pageNumber' e 'pageSize' para paginar.")
 .Produces<PagedResponse<UserResponse>>(200)
 .Produces(401)
 .Produces(403);
