@@ -83,7 +83,7 @@ public class JwtService
             };
 
             // Valida o token e extrai as claims (privilégios do usuário)
-            var principal = handler.ValidateToken(token, validationParameters, out SecurityToken validatedToken);
+            var principal = handler.ValidateToken(token, validationParameters, out _);
 
             // Extrai os dados (claims) do token válido
             var username = principal.FindFirst(ClaimTypes.Name)?.Value ?? "";
