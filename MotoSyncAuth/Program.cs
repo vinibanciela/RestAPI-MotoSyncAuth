@@ -8,23 +8,7 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using MotoSyncAuth.Data;
 using Microsoft.EntityFrameworkCore;
-
-// -----------------------------------------------------------
-// DEFINIÇÃO DE CONSTANTES
-// -----------------------------------------------------------
-public static class AppConstants
-{
-    public const string BearerScheme = "Bearer";
-    public const string UserNotFoundMessage = "Usuário não encontrado.";
-    public const string IdRouteParameter = "/{id}";
-}
-
-public static class RoleNames
-{
-    public const string Administrador = "Administrador";
-    public const string Gerente = "Gerente";
-    public const string Funcionario = "Funcionario";
-}
+using MotoSyncAuth.Constants;
 
 
 var builder = WebApplication.CreateBuilder(args);
