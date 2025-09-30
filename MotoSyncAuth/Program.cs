@@ -8,7 +8,23 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using MotoSyncAuth.Data;
 using Microsoft.EntityFrameworkCore;
-using BCrypt.Net;
+
+// -----------------------------------------------------------
+// DEFINIÇÃO DE CONSTANTES
+// -----------------------------------------------------------
+public static class AppConstants
+{
+    public const string BearerScheme = "Bearer";
+    public const string UserNotFoundMessage = "Usuário não encontrado.";
+    public const string IdRouteParameter = "/{id}";
+}
+
+public static class RoleNames
+{
+    public const string Administrador = "Administrador";
+    public const string Gerente = "Gerente";
+    public const string Funcionario = "Funcionario";
+}
 
 
 var builder = WebApplication.CreateBuilder(args);
@@ -26,13 +42,13 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
     // Adiciona esquema de segurança JWT
-    options.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+    options.AddSecurityDefinition(AppConstants.BearerScheme, new Microsoft.OpenApi.Models.OpenApiSecurityScheme
     {
         Description = "Insira o token JWT no formato: Bearer {token}",
         Name = "Authorization",
         In = Microsoft.OpenApi.Models.ParameterLocation.Header,
         Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
-        Scheme = "Bearer"
+        Scheme = AppConstants.BearerScheme
     });
 
     options.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
@@ -43,7 +59,7 @@ builder.Services.AddSwaggerGen(options =>
                 Reference = new Microsoft.OpenApi.Models.OpenApiReference
                 {
                     Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
-                    Id = "Bearer"
+                    Id = AppConstants.BearerScheme
                 }
             },
             new string[] {}
@@ -110,8 +126,8 @@ if (string.IsNullOrEmpty(jwtSecret))
 var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret));
 
 // Configura Autenticação JWT (com chave secreta)
-builder.Services.AddAuthentication("Bearer")
-    .AddJwtBearer("Bearer", options =>
+builder.Services.AddAuthentication(AppConstants.BearerScheme)
+    .AddJwtBearer(AppConstants.BearerScheme, options =>
     {
         options.RequireHttpsMetadata = false;
         options.SaveToken = true;
@@ -243,7 +259,7 @@ authGroup.MapPost("/forgot-password", (ForgotPasswordRequest request, AppDbConte
         .ToLower() == request.Email
         .ToLower());
     if (user == null)
-        return Results.NotFound("Usuário não encontrado.");
+        return Results.NotFound(AppConstants.UserNotFoundMessage);
 
     // Gera um token e define a validade (15 minutos)
     user.PasswordResetToken = Guid.NewGuid().ToString();
@@ -326,12 +342,12 @@ userGroup.MapGet("/", async (
     // Inicia a consulta (IQueryable permite que o EF otimize o SQL)
     IQueryable<User> query = dbContext.Usuarios.Include(u => u.Role);
 
-    if (requestingUser.Role?.Name == "Gerente")
+    if (requestingUser.Role?.Name == RoleNames.Gerente)
     {
         // Se for Gerente, filtra para ver apenas Gerentes e Funcionários
-        query = query.Where(u => u.Role!.Name == "Gerente" || u.Role!.Name == "Funcionario");
+        query = query.Where(u => u.Role!.Name == RoleNames.Gerente || u.Role!.Name == RoleNames.Funcionario);
     }
-    else if (requestingUser.Role?.Name != "Administrador")
+    else if (requestingUser.Role?.Name != RoleNames.Administrador)
     {
         // Se não for Admin nem Gerente, não pode listar ninguém
         return Results.Forbid();
@@ -363,7 +379,7 @@ userGroup.MapGet("/", async (
 
 
 // GET /users/{id} → Retorna um usuário específico por ID
-userGroup.MapGet("/{id}", async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+userGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado a partir do token JWT
     var tokenUser = jwt.ExtractUserFromRequest(http);
@@ -380,7 +396,7 @@ userGroup.MapGet("/{id}", async (int id, HttpContext http, AppDbContext dbContex
     // Busca o usuário alvo pelo ID no banco, incluindo a Role
     var targetUser = await dbContext.Usuarios.Include(u => u.Role).FirstOrDefaultAsync(u => u.Id == id);
     if (targetUser == null)
-        return Results.NotFound("Usuário não encontrado.");
+        return Results.NotFound(AppConstants.UserNotFoundMessage);
 
     // Mapeia os dados do usuário para o DTO de resposta
     var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role!.Name);
@@ -391,16 +407,16 @@ userGroup.MapGet("/{id}", async (int id, HttpContext http, AppDbContext dbContex
 
     // Adiciona links de outras ações (atualizar, deletar) condicionalmente, com base nas permissões.
     bool canModify = false;
-    if (requestingUser.Role?.Name == "Administrador")
+    if (requestingUser.Role?.Name == RoleNames.Administrador)
     {
         // Administrador pode modificar qualquer um, exceto a si mesmo (regra de negócio).
         if(requestingUser.Id != targetUser.Id)
             canModify = true;
     }
-    else if (requestingUser.Role?.Name == "Gerente")
+    else if (requestingUser.Role?.Name == RoleNames.Gerente)
     {
         // Gerente só pode modificar Funcionários.
-        if (targetUser.Role?.Name == "Funcionario")
+        if (targetUser.Role?.Name == RoleNames.Funcionario)
             canModify = true;
     }
 
@@ -438,18 +454,18 @@ userGroup.MapGet("/by-email", async (string email, HttpContext http, AppDbContex
     // Busca o usuário alvo pelo e-mail no banco, incluindo a Role
     var targetUser = await dbContext.Usuarios.Include(u => u.Role).FirstOrDefaultAsync(u => u.Email == email);
     if (targetUser == null)
-        return Results.NotFound("Usuário não encontrado.");
+        return Results.NotFound(AppConstants.UserNotFoundMessage);
 
-    if (requestingUser.Role?.Name == "Administrador")
+    if (requestingUser.Role?.Name == RoleNames.Administrador)
     {
         // Se for Administrador, pode visualizar qualquer usuário
         var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role!.Name);
         return Results.Ok(response);
     }
-    else if (requestingUser.Role?.Name == "Gerente")
+    else if (requestingUser.Role?.Name == RoleNames.Gerente)
     {
         // Gerente pode visualizar Gerentes e Funcionários, mas não Administradores
-        if (targetUser.Role?.Name == "Administrador")
+        if (targetUser.Role?.Name == RoleNames.Administrador)
             return Results.Forbid();
 
         var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role!.Name);
@@ -485,7 +501,7 @@ userGroup.MapPost("/", async (CreateUserRequest request, HttpContext http, AppDb
         return Results.Unauthorized();
 
     // Funcionário não pode criar ninguém
-    if (requestingUser.Role?.Name == "Funcionario")
+    if (requestingUser.Role?.Name == RoleNames.Funcionario)
         return Results.Forbid();
 
     // Gerente só pode criar Funcionários (Exemplo: RoleId 3 = Funcionário)
@@ -493,8 +509,13 @@ userGroup.MapPost("/", async (CreateUserRequest request, HttpContext http, AppDb
     if (roleOfNewUser == null)
         return Results.BadRequest("Cargo inválido.");
         
-    if (requestingUser.Role?.Name == "Gerente" && roleOfNewUser.Name != "Funcionario")
-        return Results.Forbid();
+    if (requestingUser.Role?.Name == RoleNames.Gerente && roleOfNewUser.Name != RoleNames.Funcionario)
+    {
+        return Results.Problem(
+            detail: "Gerentes só podem criar usuários com o cargo de Funcionário.",
+            statusCode: StatusCodes.Status403Forbidden
+        );
+    }
 
     // Verifica se o e-mail já existe no banco
     if (await dbContext.Usuarios.AnyAsync(u => u.Email == request.Email))
@@ -536,7 +557,7 @@ userGroup.MapPost("/", async (CreateUserRequest request, HttpContext http, AppDb
 
 
 /// PUT /users/{id} → Atualiza os dados de um usuário
-userGroup.MapPut("/{id}", async (int id, UpdateUserRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+userGroup.MapPut(AppConstants.IdRouteParameter, async (int id, UpdateUserRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado
     var tokenUser = jwt.ExtractUserFromRequest(http);
@@ -551,7 +572,7 @@ userGroup.MapPut("/{id}", async (int id, UpdateUserRequest request, HttpContext 
         return Results.Unauthorized();
 
     // Funcionário não pode atualizar ninguém
-    if (requestingUser.Role?.Name == "Funcionario")
+    if (requestingUser.Role?.Name == RoleNames.Funcionario)
         return Results.Forbid();
 
     // Busca o usuário alvo no banco de dados pelo ID
@@ -560,10 +581,10 @@ userGroup.MapPut("/{id}", async (int id, UpdateUserRequest request, HttpContext 
         .FirstOrDefaultAsync(u => u.Id == id);
 
     if (targetUser == null)
-        return Results.NotFound("Usuário não encontrado.");
+        return Results.NotFound(AppConstants.UserNotFoundMessage);
 
     // Gerente só pode editar Funcionários
-    if (requestingUser.Role?.Name == "Gerente" && targetUser.Role?.Name != "Funcionario")
+    if (requestingUser.Role?.Name == RoleNames.Gerente && targetUser.Role?.Name != RoleNames.Funcionario)
         return Results.Forbid();
 
     // Atualiza os campos permitidos
@@ -593,7 +614,7 @@ userGroup.MapPut("/{id}", async (int id, UpdateUserRequest request, HttpContext 
 
 
 // DELETE /users/{id} → Remove um usuário do sistema
-userGroup.MapDelete("/{id}", async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+userGroup.MapDelete(AppConstants.IdRouteParameter, async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado
     var tokenUser = jwt.ExtractUserFromRequest(http);
@@ -608,7 +629,7 @@ userGroup.MapDelete("/{id}", async (int id, HttpContext http, AppDbContext dbCon
         return Results.Unauthorized();
         
     // Funcionário não pode excluir ninguém
-    if (requestingUser.Role?.Name == "Funcionario")
+    if (requestingUser.Role?.Name == RoleNames.Funcionario)
         return Results.Forbid();
 
     // Busca o usuário alvo no banco de dados
@@ -617,14 +638,14 @@ userGroup.MapDelete("/{id}", async (int id, HttpContext http, AppDbContext dbCon
         .FirstOrDefaultAsync(u => u.Id == id);
 
     if (targetUser == null)
-        return Results.NotFound("Usuário não encontrado.");
+        return Results.NotFound(AppConstants.UserNotFoundMessage);
         
     // Usuário não pode deletar a si mesmo
     if (requestingUser.Id == targetUser.Id)
         return Results.BadRequest("Não é permitido excluir o próprio usuário.");
 
     // Se for Gerente, só pode excluir Funcionários
-    if (requestingUser.Role?.Name == "Gerente" && targetUser.Role?.Name != "Funcionario")
+    if (requestingUser.Role?.Name == RoleNames.Gerente && targetUser.Role?.Name != RoleNames.Funcionario)
         return Results.Forbid();
 
     // Remove o usuário
@@ -670,7 +691,7 @@ roleGroup.MapGet("/", async (HttpContext http, AppDbContext dbContext, JwtServic
     var user = await dbContext.Usuarios.Include(u => u.Role)
         .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
 
-    if (user?.Role?.Name != "Administrador")
+    if (user?.Role?.Name != RoleNames.Administrador)
         return Results.Forbid();
 
     // Busca todas as roles no banco de dados
@@ -688,7 +709,7 @@ roleGroup.MapGet("/", async (HttpContext http, AppDbContext dbContext, JwtServic
 
 
 /// GET /roles/{id} → Busca uma role por ID
-roleGroup.MapGet("/{id}", async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+roleGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     var tokenUser = jwt.ExtractUserFromRequest(http);
     if (tokenUser == null) return Results.Unauthorized();
@@ -696,7 +717,7 @@ roleGroup.MapGet("/{id}", async (int id, HttpContext http, AppDbContext dbContex
     var user = await dbContext.Usuarios.Include(u => u.Role)
         .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
 
-    if (user?.Role?.Name != "Administrador")
+    if (user?.Role?.Name != RoleNames.Administrador)
         return Results.Forbid();
 
     // Busca a role no banco de dados
@@ -726,7 +747,7 @@ roleGroup.MapPost("/", async (CreateRoleRequest request, HttpContext http, AppDb
     var user = await dbContext.Usuarios.Include(u => u.Role)
         .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
 
-    if (user?.Role?.Name != "Administrador")
+    if (user?.Role?.Name != RoleNames.Administrador)
         return Results.Forbid();
 
     // Cria uma nova role no banco de dados
@@ -746,7 +767,7 @@ roleGroup.MapPost("/", async (CreateRoleRequest request, HttpContext http, AppDb
 
 
 /// PUT /roles/{id} → Atualiza uma role existente
-roleGroup.MapPut("/{id}", async (int id, UpdateRoleRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+roleGroup.MapPut(AppConstants.IdRouteParameter, async (int id, UpdateRoleRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     var tokenUser = jwt.ExtractUserFromRequest(http);
     if (tokenUser == null) return Results.Unauthorized();
@@ -754,7 +775,7 @@ roleGroup.MapPut("/{id}", async (int id, UpdateRoleRequest request, HttpContext 
     var user = await dbContext.Usuarios.Include(u => u.Role)
         .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
 
-    if (user?.Role?.Name != "Administrador")
+    if (user?.Role?.Name != RoleNames.Administrador)
         return Results.Forbid();
 
     // Busca a role pelo ID
@@ -777,7 +798,7 @@ roleGroup.MapPut("/{id}", async (int id, UpdateRoleRequest request, HttpContext 
 
 
 /// DELETE /roles/{id} → Exclui uma role
-roleGroup.MapDelete("/{id}", async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+roleGroup.MapDelete(AppConstants.IdRouteParameter, async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
 {
     var tokenUser = jwt.ExtractUserFromRequest(http);
     if (tokenUser == null) return Results.Unauthorized();
@@ -785,7 +806,7 @@ roleGroup.MapDelete("/{id}", async (int id, HttpContext http, AppDbContext dbCon
     var user = await dbContext.Usuarios.Include(u => u.Role)
         .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
 
-    if (user?.Role?.Name != "Administrador")
+    if (user?.Role?.Name != RoleNames.Administrador)
         return Results.Forbid();
 
     // Busca a role pelo ID
@@ -831,7 +852,7 @@ auditGroup.MapGet("/", async (
     var userFromDb = await dbContext.Usuarios.Include(u => u.Role).AsNoTracking()
         .FirstOrDefaultAsync(u => u.Email == user.Email);
 
-    if (userFromDb?.Role?.Name != "Administrador") 
+    if (userFromDb?.Role?.Name != RoleNames.Administrador) 
         return Results.Forbid();
     
     // Consulta base
