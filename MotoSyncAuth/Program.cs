@@ -25,6 +25,10 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
+     // Ativando comentários (usamos nos DTOs e Models)
+    var xmlFilename = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
+    options.IncludeXmlComments(Path.Combine(AppContext.BaseDirectory, xmlFilename));
+
     // Adiciona esquema de segurança JWT
     options.AddSecurityDefinition(AppConstants.BearerScheme, new Microsoft.OpenApi.Models.OpenApiSecurityScheme
     {
