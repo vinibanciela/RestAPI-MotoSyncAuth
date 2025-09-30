@@ -413,10 +413,9 @@ userGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http,
         if(requestingUser.Id != targetUser.Id)
             canModify = true;
     }
-    else if (requestingUser.Role?.Name == RoleNames.Gerente)
+    else if (requestingUser.Role?.Name == RoleNames.Gerente && targetUser.Role?.Name == RoleNames.Funcionario)
     {
         // Gerente só pode modificar Funcionários.
-        if (targetUser.Role?.Name == RoleNames.Funcionario)
             canModify = true;
     }
 
