@@ -15,4 +15,10 @@ public record PagedResponse<T>(
     int PageSize,
     int TotalCount,
     int TotalPages
-);
+)
+{
+    /// <summary>
+    /// Lista de links HATEOAS para navegação na coleção (ex: self, next-page).
+    /// </summary>
+    public List<LinkDto> Links { get; set; } = new();
+}

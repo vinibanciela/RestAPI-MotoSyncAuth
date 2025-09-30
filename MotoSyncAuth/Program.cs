@@ -238,11 +238,15 @@ authGroup.MapGet("/me", async (HttpContext http, AppDbContext dbContext, JwtServ
 
     // Mapeia para o DTO de resposta para não expor dados sensíveis
     var response = new UserResponse(requestingUser.Id, requestingUser.Username, requestingUser.Email, requestingUser.Role!.Name);
+    
+    // Adiciona o link HATEOAS 'self' para o recurso do próprio usuário
+    response.Links.Add(new LinkDto($"/users/{requestingUser.Id}", "self", "GET"));
+
     return Results.Ok(response);
 })
 .WithSummary("Dados do usuário logado")
-.WithDescription("Retorna os dados do usuário a partir do token JWT.")
-.Produces<UserResponse>(200) // Atualiza o tipo de produção no Swagger
+.WithDescription("Retorna os dados do usuário a partir do token JWT, incluindo um link HATEOAS para o recurso do usuário.")
+.Produces<UserResponse>(200)
 .Produces(401);
 
 
@@ -366,10 +370,21 @@ userGroup.MapGet("/", async (
     // 4. Criar a resposta paginada
     var pagedResponse = new PagedResponse<UserResponse>(items, pageNumber, pageSize, totalCount, totalPages);
 
+    // 5. Adicionar os links HATEOAS à resposta paginada
+    pagedResponse.Links.Add(new LinkDto($"/users?pageNumber={pageNumber}&pageSize={pageSize}", "self", "GET"));
+    if (pageNumber < totalPages)
+    {
+        pagedResponse.Links.Add(new LinkDto($"/users?pageNumber={pageNumber + 1}&pageSize={pageSize}", "next-page", "GET"));
+    }
+    if (pageNumber > 1)
+    {
+        pagedResponse.Links.Add(new LinkDto($"/users?pageNumber={pageNumber - 1}&pageSize={pageSize}", "prev-page", "GET"));
+    }
+
     return Results.Ok(pagedResponse);
 })
 .WithSummary("Listar usuários com paginação")
-.WithDescription("Administrador vê todos. Gerente vê Gerentes e Funcionários (não Admin). Usa os parâmetros 'pageNumber' e 'pageSize' para paginar.")
+.WithDescription("Admin vê todos. Gerente vê Gerentes e Funcionários. A resposta é paginada e inclui links HATEOAS para navegação.")
 .Produces<PagedResponse<UserResponse>>(200)
 .Produces(401)
 .Produces(403);
@@ -680,8 +695,16 @@ var roleGroup = app.MapGroup("/roles").WithTags("Cargos");
 
 
 // GET /roles → Lista todas as roles
-roleGroup.MapGet("/", async (HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+roleGroup.MapGet("/", async (
+    int pageNumber,
+    int pageSize,
+    HttpContext http,
+    AppDbContext dbContext,
+    JwtService jwt) =>
 {
+    if (pageNumber <= 0) pageNumber = 1;
+    if (pageSize <= 0) pageSize = 10;
+
     var tokenUser = jwt.ExtractUserFromRequest(http);
     if (tokenUser == null) return Results.Unauthorized();
 
@@ -691,16 +714,35 @@ roleGroup.MapGet("/", async (HttpContext http, AppDbContext dbContext, JwtServic
     if (user?.Role?.Name != RoleNames.Administrador)
         return Results.Forbid();
 
-    // Busca todas as roles no banco de dados
-    var roles = await dbContext.Roles
+    // Consulta base
+    IQueryable<Role> query = dbContext.Roles;
+
+    var totalCount = await query.CountAsync();
+    var items = await query
+        .Skip((pageNumber - 1) * pageSize)
+        .Take(pageSize)
         .Select(r => new RoleResponse(r.Id, r.Name))
         .ToListAsync();
 
-    return Results.Ok(roles);
+    var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+    var pagedResponse = new PagedResponse<RoleResponse>(items, pageNumber, pageSize, totalCount, totalPages);
+
+    // Adiciona os links HATEOAS à resposta paginada
+    pagedResponse.Links.Add(new LinkDto($"/roles?pageNumber={pageNumber}&pageSize={pageSize}", "self", "GET"));
+    if (pageNumber < totalPages)
+    {
+        pagedResponse.Links.Add(new LinkDto($"/roles?pageNumber={pageNumber + 1}&pageSize={pageSize}", "next-page", "GET"));
+    }
+    if (pageNumber > 1)
+    {
+        pagedResponse.Links.Add(new LinkDto($"/roles?pageNumber={pageNumber - 1}&pageSize={pageSize}", "prev-page", "GET"));
+    }
+
+    return Results.Ok(pagedResponse);
 })
-.WithSummary("Listar roles")
-.WithDescription("Apenas Administrador pode acessar lista de cargos.")
-.Produces<IEnumerable<RoleResponse>>(200)
+.WithSummary("Listar roles com paginação")
+.WithDescription("Apenas Administrador pode acessar a lista de cargos. A resposta é paginada e inclui links HATEOAS para navegação.")
+.Produces<PagedResponse<RoleResponse>>(200)
 .Produces(401)
 .Produces(403);
 
@@ -881,10 +923,21 @@ auditGroup.MapGet("/", async (
     // 4. Criar a resposta paginada
     var pagedResponse = new PagedResponse<AuditLogResponse>(items, pageNumber, pageSize, totalCount, totalPages);
     
+    // 5. Adicionar os links HATEOAS à resposta paginada
+    pagedResponse.Links.Add(new LinkDto($"/audits?pageNumber={pageNumber}&pageSize={pageSize}", "self", "GET"));
+    if (pageNumber < totalPages)
+    {
+        pagedResponse.Links.Add(new LinkDto($"/audits?pageNumber={pageNumber + 1}&pageSize={pageSize}", "next-page", "GET"));
+    }
+    if (pageNumber > 1)
+    {
+        pagedResponse.Links.Add(new LinkDto($"/audits?pageNumber={pageNumber - 1}&pageSize={pageSize}", "prev-page", "GET"));
+    }
+    
     return Results.Ok(pagedResponse);
 })
 .WithSummary("Listar logs de auditoria com paginação")
-.WithDescription("Retorna os eventos do sistema de forma paginada. Acesso exclusivo para Administradores. Usa 'pageNumber' e 'pageSize' para paginar.")
+.WithDescription("Acesso exclusivo para Admins.Retorna os eventos do sistema de forma paginada. Inclui links HATEOAS para navegação.")
 .Produces<PagedResponse<AuditLogResponse>>(200)
 .Produces(401)
 .Produces(403);
