@@ -1,10 +1,18 @@
 namespace MotoSyncAuth.DTOs;
 
-// DTO genérico para respostas paginadas
+/// <summary>
+/// DTO genérico para encapsular respostas paginadas da API.
+/// </summary>
+/// <typeparam name="T">O tipo dos itens contidos na página.</typeparam>
+/// <param name="Items">A lista de itens da página atual.</param>
+/// <param name="PageNumber">O número da página atual que está sendo retornada.</param>
+/// <param name="PageSize">A quantidade máxima de itens por página.</param>
+/// <param name="TotalCount">O número total de itens disponíveis no banco de dados.</param>
+/// <param name="TotalPages">O número total de páginas existentes com base no PageSize.</param>
 public record PagedResponse<T>(
-    IEnumerable<T> Items, // A lista de itens da página atual
-    int PageNumber,      // O número da página atual
-    int PageSize,        // O tamanho da página
-    int TotalCount,      // O número total de itens no banco
-    int TotalPages       // O número total de páginas
+    IEnumerable<T> Items,
+    int PageNumber,
+    int PageSize,
+    int TotalCount,
+    int TotalPages
 );
