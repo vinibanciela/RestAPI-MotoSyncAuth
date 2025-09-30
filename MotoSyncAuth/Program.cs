@@ -213,7 +213,7 @@ authGroup.MapPost("/login", async (LoginRequest request, AppDbContext dbContext,
     return Results.Ok(new AuthResponse(user.Username, token));
 })
 .WithSummary("Login do usuário")
-.WithDescription("Autentica o usuário e retorna um token JWT.")
+.WithDescription("Autentica o usuário e retorna um token JWT.Em caso de falha (401), a resposta incluirá um link para recuperação de senha.")
 .Produces<AuthResponse>(200)
 .Produces<ErrorResponse>(401) // Atualiza a documentação do Swagger para o novo tipo de erro
 .RequireRateLimiting("default");
@@ -425,7 +425,7 @@ userGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http,
     return Results.Ok(response);
 })
 .WithSummary("Buscar usuário por ID")
-.WithDescription("Administrador vê todos. Gerente vê Gerentes e Funcionários (não Admin). Funcionário não vê ninguém.")
+.WithDescription("Administrador vê todos. Gerente vê Gerentes e Funcionários (não Admin). Funcionário não vê ninguém. A resposta inclui links HATEOAS para ações atualizar e deletar com base nas permissões do usuário autenticado, e um link 'self'.")
 .Produces<UserResponse>(200)
 .Produces(401)
 .Produces(403)
@@ -717,18 +717,26 @@ roleGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http,
     if (user?.Role?.Name != RoleNames.Administrador)
         return Results.Forbid();
 
-    // Busca a role no banco de dados
-    var role = await dbContext.Roles
-        .Where(r => r.Id == id)
-        .Select(r => new RoleResponse(r.Id, r.Name))
-        .FirstOrDefaultAsync();
+    // Busca a entidade 'Role' completa no banco de dados
+    var role = await dbContext.Roles.FindAsync(id);
 
-    return role is not null 
-        ? Results.Ok(role) 
-        : Results.NotFound("Role não encontrada.");
+    if (role is null)
+    {
+        return Results.NotFound("Role não encontrada.");
+    }
+        
+    // Mapeia a entidade para o DTO de resposta
+    var response = new RoleResponse(role.Id, role.Name);
+
+    // Adiciona os links HATEOAS para as ações possíveis
+    response.Links.Add(new LinkDto($"/roles/{role.Id}", "self", "GET"));
+    response.Links.Add(new LinkDto($"/roles/{role.Id}", "update-role", "PUT"));
+    response.Links.Add(new LinkDto($"/roles/{role.Id}", "delete-role", "DELETE"));
+    
+    return Results.Ok(response);
 })
 .WithSummary("Buscar role por ID")
-.WithDescription("Apenas Administrador pode consultar cargos.")
+.WithDescription("Apenas Administrador pode consultar cargos. A resposta inclui links HATEOAS para atualizar e deletar o cargo, e um link 'self'.")
 .Produces<RoleResponse>(200)
 .Produces(401)
 .Produces(403)
