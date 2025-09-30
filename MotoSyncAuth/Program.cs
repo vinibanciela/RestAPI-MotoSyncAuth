@@ -886,4 +886,4 @@ auditGroup.MapGet("/", async (
 app.MapGet("/healthz", () => Results.Ok("Healthy")).ExcludeFromDescription();
 
 // 🚀 Inicializa o servidor
-app.Run();
+await app.RunAsync();
