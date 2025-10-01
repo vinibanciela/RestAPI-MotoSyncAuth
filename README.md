@@ -16,7 +16,7 @@ Esta é a API RESTful de autenticação e gerenciamento de acesso do sistema Mot
 
 ### 🚀 Visão Geral
 
-- **Tecnologias:** ASP.NET Core 8, Entity Framework Core + Migration, JWT, BCrypt, Rate Limiting, Docker, Docker Compose, PostGreSQL, AzureDatabaseSQL, Azure Container Registry, Azure Web App for Containers, Swagger, Redoc
+- **Tecnologias:** ASP.NET Core 8, Entity Framework Core + Migration, JWT, BCrypt, Rate Limiting, Docker, Docker Compose, PostGreSQL, Azure CLI, AzureDatabaseSQL, Azure Container Registry, Azure Web App for Containers, Swagger, ReDoc
 - **Funcionalidades:**
   - Rate Limiting para proteção contra brute-force
   - Autenticação via JWT
@@ -56,9 +56,9 @@ Possui recurso de paginação para as listagens de usuários, cargos e logs de a
 
 Com um conjunto robusto de endpoints, o sistema cobre desde o login e recuperação de senha até a gestão completa de usuários e cargos, aplicando regras de autorização para garantir que cada nível de usuário possa acessar apenas os recursos permitidos. A implementação contempla ainda validação de dados, tratamento de erros e retornos HTTP padronizados (200 OK, 400 Bad Request, 401 Unauthorized, 403 Forbidden, 404 Not Found, entre outros).
 
-A documentação completa da API foi elaborada com base no padrão OpenAPI, utilizando ferramentas como Swagger e ReDoc, proporcionando uma interface visual intuitiva para consulta das rotas, parâmetros e retornos. Para reforçar adicionamos comentários nas Models e DTOs exibivéis em OpenAPI (Swagger ou Redoc) com XML Documentation Comments.
+A documentação completa da API foi elaborada com base no padrão OpenAPI, utilizando ferramentas como Swagger e ReDoc, proporcionando uma interface visual intuitiva para consulta das rotas, parâmetros e retornos. Para reforçar adicionamos comentários nas Models e DTOs, exibivéis em OpenAPI (Swagger ou Redoc) com XML Documentation Comments.
 
-A preferência pela estrutura "minimal" se deu pela modularidade que foi pensado o sistema, cuidando apenas de uma parte (autenticação e gerenciamento de acesso) a nossa API, sem interferir assim nas demais. Além disso, mas no mesmo sentido, a organização do código foi desenhada para garantir manutenibilidade, clareza e eficiência, facilitando a continuidade e expansão do projeto em etapas futuras.
+A preferência pela estrutura "Minimal" se deu pela modularidade que foi pensado o sistema, cuidando apenas de uma parte (autenticação e gerenciamento de acesso) a nossa API não interfere na competência das demais. No mesmo sentido, a organização do código foi desenhada então para garantir manutenibilidade, clareza e eficiência, facilitando a continuidade e expansão do projeto em etapas futuras.
 
 ## 🚀 Guia de Execução [Ambiente Development - Local]
 
@@ -72,7 +72,7 @@ A preferência pela estrutura "minimal" se deu pela modularidade que foi pensado
 1.  **Clone o repositório:**
 
     ```shell
-    git clone [https://github.com/vinibanciela/RestAPI-MotoSyncAuth.git](https://github.com/vinibanciela/RestAPI-MotoSyncAuth.git)
+    git clone https://github.com/vinibanciela/RestAPI-MotoSyncAuth.git
     ```
 
 2.  **Navegue até a pasta raiz do projeto:**
@@ -115,7 +115,7 @@ Este guia descreve o passo a passo para fazer o deploy completo da aplicação (
 1.  **Clone o repositório:**
 
     ```shell
-    git clone [https://github.com/vinibanciela/RestAPI-MotoSyncAuth.git](https://github.com/vinibanciela/RestAPI-MotoSyncAuth.git)
+    git clone https://github.com/vinibanciela/RestAPI-MotoSyncAuth.git
     ```
 
 2.  **Navegue até a pasta raiz do projeto:**
@@ -223,11 +223,11 @@ Finalmente, criamos o serviço que irá executar nossa API.
     `https://<seu_nome_de_app_unico>.azurewebsites.net/swagger`
 3.  [Obs] Acesse sua API pela URL do Swagger: Se você usou os mesmos nomes do script, o link exato será:
     ```
-    [https://webapp-motosync.azurewebsites.net/swagger/index.html](https://webapp-motosync.azurewebsites.net/swagger/index.html)
+    https://webapp-motosync.azurewebsites.net/swagger/index.html
     ```
     > 💡 **Dica:** O nome do Web App (`webapp-motosync`) deve ser único globalmente. Se você precisou usar um nome diferente, ajuste a URL de acordo.
 
-#📂 Estrutura de Endpoints
+# 📂 Estrutura de Endpoints
 
 ### 📋 Audits
 
