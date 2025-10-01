@@ -96,7 +96,7 @@ A preferência pela estrutura "Minimal" se deu pela modularidade que foi pensado
     http://localhost:8080/swagger/index.html
     ```
 
-## 🚀 Guia de Deploy (Ambiente na Nuvem - Production)
+## 🚀 Guia de Deploy (Ambiente Production - Nuvem)
 
 Este guia descreve o passo a passo para fazer o deploy completo da aplicação (Banco de Dados + API) no Azure utilizando o Azure CLI e Docker. Os comandos devem ser executados em sequência a partir do seu terminal local.
 
@@ -231,9 +231,9 @@ Finalmente, criamos o serviço que irá executar nossa API.
 
 ### 📋 Audits
 
-| Método | Rota    | Descrição                                              | Respostas HTTP                                                            | Tipo de Acesso |
-| ------ | ------- | ------------------------------------------------------ | ------------------------------------------------------------------------- | -------------- |
-| GET    | /audits | Lista logs de auditoria com paginação e links HATEOAS. | 200 OK (PagedResponse<AuditLogResponse>), 401 Unauthorized, 403 Forbidden | Privada        |
+| Método | Rota    | Descrição               | Respostas HTTP                                                            | Tipo de Acesso |
+| ------ | ------- | ----------------------- | ------------------------------------------------------------------------- | -------------- |
+| GET    | /audits | Lista logs de auditoria | 200 OK (PagedResponse<AuditLogResponse>), 401 Unauthorized, 403 Forbidden | Privada        |
 
 ### 🔐 Auth
 
