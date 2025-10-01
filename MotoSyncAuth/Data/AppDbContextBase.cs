@@ -4,10 +4,13 @@ using MotoSyncAuth.Services; // Importa o SecurityService para hashear a senha p
 
 namespace MotoSyncAuth.Data
 {
-    public class AppDbContext : DbContext
+    // Esta classe foi refatorada para ser uma classe base abstrata.
+    // Ela contém toda a lógica comum do DbContext que será compartilhada
+    // entre as implementações específicas para PostgreSQL e SQL Server.
+    public abstract class AppDbContextBase : DbContext
     {
-        // Construtor que recebe as opções de configuração (string de conexão, etc.)
-        public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
+        // Construtor protegido que recebe as opções de configuração do provedor específico.
+        protected AppDbContextBase(DbContextOptions options) : base(options)
         {
         }
 
@@ -28,7 +31,7 @@ namespace MotoSyncAuth.Data
             // Configura a tabela Role para mapear a entidade Role
             modelBuilder.Entity<Role>().ToTable("ROLE");
 
-            // Configura a tabela Role para mapear a entidade Role
+            // Configura a tabela AuditLog para mapear a entidade AuditLog
             modelBuilder.Entity<AuditLog>().ToTable("AUDIT_LOG");
 
             // --- INÍCIO DO CÓDIGO DE DATA SEEDING ---

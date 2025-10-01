@@ -83,24 +83,24 @@ builder.Services.AddRateLimiter(opt =>
 
 // Injeção de dependência dos nossos serviços customizados
 builder.Services.AddSingleton<JwtService>();    // Gera e valida tokens
+
 //builder.Services.AddSingleton<UserService>();   // Simula usuários em memória (utilizado para testar API sem conexão oracle)
 
 
 // AppDbContext com conexão para múltiplos provedores conforme o ambiente
-builder.Services.AddDbContext<AppDbContext>(options =>
+// Injeta a classe base AppDbContextBase, e o sistema de injeção de dependênciafornece a implementação correta (Postgres ou Azure) com base no ambiente.
+if (builder.Environment.IsDevelopment())
 {
-    if (builder.Environment.IsDevelopment())
-    {
-        // Usa PostgreSQL em ambiente de desenvolvimento
-        options.UseNpgsql(builder.Configuration.GetConnectionString("PostgresConnection"));
-    }
-    else
-    {
-        // Usa SQL Server (Azure SQL) em qualquer outro ambiente (Produção)
-        // A Connection String será lida de uma variável de ambiente no Azure
-        options.UseSqlServer(builder.Configuration.GetConnectionString("AzureSqlConnection"));
-    }
-});
+    // Registra e configura o DbContext para PostgreSQL em ambiente de desenvolvimento
+    builder.Services.AddDbContext<AppDbContextBase, PostgresDbContext>(options =>
+        options.UseNpgsql(builder.Configuration.GetConnectionString("PostgresConnection")));
+}
+else
+{
+    // Registra e configura o DbContext para SQL Server (Azure SQL) em qualquer outro ambiente (Produção)
+    builder.Services.AddDbContext<AppDbContextBase, AzureDbContext>(options =>
+        options.UseSqlServer(builder.Configuration.GetConnectionString("AzureSqlConnection")));
+}
 
 
 // Pega a chave secreta da configuração
@@ -141,7 +141,7 @@ var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
 {
-    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContextBase>();
     dbContext.Database.Migrate(); //aplica migrations automaticamente
 }
 
@@ -184,7 +184,7 @@ var authGroup = app.MapGroup("/auth").WithTags("Autenticação");
 
 
 // POST /auth/login → Realiza login e retorna JWT
-authGroup.MapPost("/login", async (LoginRequest request, AppDbContext dbContext, JwtService jwt) =>
+authGroup.MapPost("/login", async (LoginRequest request, AppDbContextBase dbContext, JwtService jwt) =>
 {
     // Busca o usuário no banco pelo e-mail
     var user = await dbContext.Usuarios
@@ -220,7 +220,7 @@ authGroup.MapPost("/login", async (LoginRequest request, AppDbContext dbContext,
 
 
 // GET /auth/me → Retorna dados do usuário autenticado via token
-authGroup.MapGet("/me", async (HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+authGroup.MapGet("/me", async (HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
     // Extrai os dados do token JWT
     var tokenUser = jwt.ExtractUserFromRequest(http);
@@ -251,7 +251,7 @@ authGroup.MapGet("/me", async (HttpContext http, AppDbContext dbContext, JwtServ
 
 
 // POST /auth/forgot-password → Gera token de redefinição de senha
-authGroup.MapPost("/forgot-password", (ForgotPasswordRequest request, AppDbContext dbContext) =>
+authGroup.MapPost("/forgot-password", (ForgotPasswordRequest request, AppDbContextBase dbContext) =>
 {
     // Busca o usuário no banco de dados pelo e-mail informado
     var user = dbContext.Usuarios
@@ -278,7 +278,7 @@ authGroup.MapPost("/forgot-password", (ForgotPasswordRequest request, AppDbConte
 
 
 // POST /auth/reset-password → Redefine a senha com token
-authGroup.MapPost("/reset-password", (ResetPasswordRequest request, AppDbContext dbContext) =>
+authGroup.MapPost("/reset-password", (ResetPasswordRequest request, AppDbContextBase dbContext) =>
 {
     // Busca o usuário pelo token de redefinição de senha
     var user = dbContext.Usuarios.FirstOrDefault(u =>
@@ -321,7 +321,7 @@ userGroup.MapGet("/", async (
     int pageNumber, // Parâmetro para o número da página
     int pageSize,   // Parâmetro para o tamanho da página
     HttpContext http, 
-    AppDbContext dbContext, 
+    AppDbContextBase dbContext, 
     JwtService jwt) =>
 {
     // Validação básica para os parâmetros de paginação
@@ -391,7 +391,7 @@ userGroup.MapGet("/", async (
 
 
 // GET /users/{id} → Retorna um usuário específico por ID
-userGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+userGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado a partir do token JWT
     var tokenUser = jwt.ExtractUserFromRequest(http);
@@ -448,7 +448,7 @@ userGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http,
 
 
 // GET /users/by-email → Busca usuário pelo e-mail
-userGroup.MapGet("/by-email", async (string email, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+userGroup.MapGet("/by-email", async (string email, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado a partir do token JWT
     var tokenUser = jwt.ExtractUserFromRequest(http);
@@ -497,7 +497,7 @@ userGroup.MapGet("/by-email", async (string email, HttpContext http, AppDbContex
 
 
 // POST /users → Cria um novo usuário
-userGroup.MapPost("/", async (CreateUserRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+userGroup.MapPost("/", async (CreateUserRequest request, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado do token
     var tokenUser = jwt.ExtractUserFromRequest(http);
@@ -568,7 +568,7 @@ userGroup.MapPost("/", async (CreateUserRequest request, HttpContext http, AppDb
 
 
 // PUT /users/{id} → Atualiza os dados de um usuário
-userGroup.MapPut(AppConstants.IdRouteParameter, async (int id, UpdateUserRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+userGroup.MapPut(AppConstants.IdRouteParameter, async (int id, UpdateUserRequest request, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado
     var tokenUser = jwt.ExtractUserFromRequest(http);
@@ -625,7 +625,7 @@ userGroup.MapPut(AppConstants.IdRouteParameter, async (int id, UpdateUserRequest
 
 
 // DELETE /users/{id} → Remove um usuário do sistema
-userGroup.MapDelete(AppConstants.IdRouteParameter, async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+userGroup.MapDelete(AppConstants.IdRouteParameter, async (int id, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
     // Extrai o usuário autenticado
     var tokenUser = jwt.ExtractUserFromRequest(http);
@@ -699,7 +699,7 @@ roleGroup.MapGet("/", async (
     int pageNumber,
     int pageSize,
     HttpContext http,
-    AppDbContext dbContext,
+    AppDbContextBase dbContext,
     JwtService jwt) =>
 {
     if (pageNumber <= 0) pageNumber = 1;
@@ -748,7 +748,7 @@ roleGroup.MapGet("/", async (
 
 
 // GET /roles/{id} → Busca uma role por ID
-roleGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+roleGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
     var tokenUser = jwt.ExtractUserFromRequest(http);
     if (tokenUser == null) return Results.Unauthorized();
@@ -786,7 +786,7 @@ roleGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http,
 
 
 // POST /roles → Cria uma nova role
-roleGroup.MapPost("/", async (CreateRoleRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+roleGroup.MapPost("/", async (CreateRoleRequest request, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
     var tokenUser = jwt.ExtractUserFromRequest(http);
     if (tokenUser == null) return Results.Unauthorized();
@@ -814,7 +814,7 @@ roleGroup.MapPost("/", async (CreateRoleRequest request, HttpContext http, AppDb
 
 
 // PUT /roles/{id} → Atualiza uma role existente
-roleGroup.MapPut(AppConstants.IdRouteParameter, async (int id, UpdateRoleRequest request, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+roleGroup.MapPut(AppConstants.IdRouteParameter, async (int id, UpdateRoleRequest request, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
     var tokenUser = jwt.ExtractUserFromRequest(http);
     if (tokenUser == null) return Results.Unauthorized();
@@ -845,7 +845,7 @@ roleGroup.MapPut(AppConstants.IdRouteParameter, async (int id, UpdateRoleRequest
 
 
 // DELETE /roles/{id} → Exclui uma role
-roleGroup.MapDelete(AppConstants.IdRouteParameter, async (int id, HttpContext http, AppDbContext dbContext, JwtService jwt) =>
+roleGroup.MapDelete(AppConstants.IdRouteParameter, async (int id, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
     var tokenUser = jwt.ExtractUserFromRequest(http);
     if (tokenUser == null) return Results.Unauthorized();
@@ -888,7 +888,7 @@ auditGroup.MapGet("/", async (
     int pageNumber, 
     int pageSize,
     HttpContext http, 
-    AppDbContext dbContext, 
+    AppDbContextBase dbContext, 
     JwtService jwt) =>
 {
     if (pageNumber <= 0) pageNumber = 1;
