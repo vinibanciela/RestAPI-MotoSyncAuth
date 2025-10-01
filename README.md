@@ -18,17 +18,17 @@ Esta é a API RESTful de autenticação e gerenciamento de acesso do sistema Mot
 
 - **Tecnologias:** ASP.NET Core 8, Entity Framework Core + Migration, JWT, BCrypt, Rate Limiting, Docker, Docker Compose, PostGreSQL, AzureDatabaseSQL, Azure Container Registry, Azure Web App for Containers, Swagger, Redoc
 - **Funcionalidades:**
-  - Hash de senha
+  - Rate Limiting para proteção contra brute-force
   - Autenticação via JWT
-  - Gerenciamento de usuários e cargos
+  - Hash de senha
   - Redefinição de senha com token temporário
+  - Gerenciamento de usuários e cargos
   - Proteção por roles (Administrador, Gerente, Funcionário)
   - Paginação em rotas de listagem
   - HATEOAS para descoberta de ações
   - Migrations automáticas para múltiplos provedores de banco de dados (PostgreSQL e SQL Server)
   - Sistema de Log de Auditoria
   - Documentação OpenAPI com Swagger e ReDoc
-  - Rate Limiting para proteção contra brute-force
 
 ### Introdução
 
@@ -227,13 +227,13 @@ Finalmente, criamos o serviço que irá executar nossa API.
     ```
     > 💡 **Dica:** O nome do Web App (`webapp-motosync`) deve ser único globalmente. Se você precisou usar um nome diferente, ajuste a URL de acordo.
 
-## 📂 Estrutura de Endpoints
+#📂 Estrutura de Endpoints
 
-# 📘 Documentação Interativa
+### 📋 Audits
 
-- Disponível em `/swagger` (padrão ao rodar) ou `/redoc` caso preferir.
-- Local com guia de Execução - Development: http://localhost:8080/swagger/index.html
-- Nuvem com guia de Execução - Production: https://webapp-motosync.azurewebsites.net/swagger/index.html (ou a que você configurou/construiu)
+| Método | Rota    | Descrição                                              | Respostas HTTP                                                            | Tipo de Acesso |
+| ------ | ------- | ------------------------------------------------------ | ------------------------------------------------------------------------- | -------------- |
+| GET    | /audits | Lista logs de auditoria com paginação e links HATEOAS. | 200 OK (PagedResponse<AuditLogResponse>), 401 Unauthorized, 403 Forbidden | Privada        |
 
 ### 🔐 Auth
 
@@ -301,8 +301,80 @@ Finalmente, criamos o serviço que irá executar nossa API.
 | Criar novo cargo (`POST /roles`)                  |      ✅       |    ❌    |             ❌             |
 | Atualizar cargo (`PUT /roles/{id}`)               |      ✅       |    ❌    |             ❌             |
 | Excluir cargo (`DELETE /roles/{id}`)              |      ✅       |    ❌    |             ❌             |
+| **📋 Audits**                                     |               |          |                            |
+| Exibe logs do sistema (`GET /audits`)             |      ✅       |    ❌    |             ✅             |
 
 #### Observações:
 
 - ¹ Gerente pode criar, atualizar e excluir **apenas usuários Funcionários**.
 - ² Gerente pode visualizar **usuários do mesmo nível ou inferior (Gerente e Funcionário)**.
+
+## 📘 Documentação Interativa
+
+- Disponível em `/swagger` (padrão ao rodar) ou `/redoc` caso preferir.
+- Local com guia de Execução - Development: http://localhost:8080/swagger/index.html
+- Nuvem com guia de Execução - Production: https://webapp-motosync.azurewebsites.net/swagger/index.html (ou a que você configurou/construiu)
+
+## 🧪 Guia de Testes da API
+
+Este guia assume que a aplicação está em execução (seja localmente via Docker ou na nuvem) e que a interface do Swagger está acessível. É um guia simples que visa verificar o login e a proteção das rotas por roles pelo próprio Swagger.
+
+**1. Login Inicial como Administrador**
+
+A aplicação é inicializada com um usuário **Administrador** padrão para permitir o primeiro acesso.
+
+- Vá para o endpoint `POST /auth/login` no Swagger.
+- Clique em "Try it out" e use o seguinte corpo (body) na requisição:
+  ```json
+  {
+    "email": "admin@motosync.com",
+    "password": "Admin@123"
+  }
+  ```
+
+**2. Obter e Usar o Token de Acesso**
+
+- Execute a requisição de login. Na resposta, copie o valor do `token`.
+- No topo da página do Swagger, clique no botão **Authorize**.
+- Na janela que abrir, digite `Bearer ` (a palavra Bearer seguida de um espaço) e cole o seu token na frente.
+- Clique em "Authorize" e depois em "Close". A partir de agora, todas as requisições feitas pelo Swagger estarão autenticadas.
+
+**3. Testar o Comportamento do Administrador**
+
+Com o token de administrador, você tem acesso total. Teste diferentes rotas, como `GET /users`, `GET /roles`, e `GET /audits`. Todas devem funcionar e retornar os dados esperados.
+
+**4. Criar Novos Usuários (Gerente e Funcionário)**
+
+Ainda autenticado como Administrador, vá para o endpoint `POST /users` e crie dois novos usuários com cargos diferentes.
+
+- **Para criar um Gerente (`roleId: 2`):**
+
+  ```json
+  {
+    "username": "gerente.teste",
+    "email": "gerente@motosync.com",
+    "password": "Gerente@123",
+    "roleId": 2
+  }
+  ```
+
+- **Para criar um Funcionário (`roleId: 3`):**
+  ```json
+  {
+    "username": "func.teste",
+    "email": "funcionario@motosync.com",
+    "password": "Funcionario@123",
+    "roleId": 3
+  }
+  ```
+
+**5. Testar como Gerente e Funcionário**
+
+Agora, vamos verificar se as regras de permissão estão funcionando.
+
+- Faça **logout** no Swagger (clique em **Authorize** > **Logout**).
+- Repita o processo de login (Passos 1 e 2), mas desta vez use as credenciais do **Gerente** que você acabou de criar.
+- Com o novo token de Gerente, tente acessar as rotas. Você notará que algumas ações, como acessar a lista de auditoria (`GET /audits`) ou criar um novo cargo (`POST /roles`), serão bloqueadas com um erro `403 Forbidden`.
+- Repita o processo mais uma vez, logando como **Funcionário**, e observe que as permissões são ainda mais restritas (só possui acesso ao grupo `auth`).
+
+Consulte a tabela **"Regras de Acesso por Cargo"** neste `README` para entender o comportamento esperado para cada perfil.
