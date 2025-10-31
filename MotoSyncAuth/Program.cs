@@ -9,6 +9,7 @@ using System.Text;
 using MotoSyncAuth.Data;
 using Microsoft.EntityFrameworkCore;
 using MotoSyncAuth.Constants;
+using System.Security.Claims;
 
 
 var builder = WebApplication.CreateBuilder(args);
@@ -131,7 +132,18 @@ builder.Services.AddAuthentication(AppConstants.BearerScheme)
 
 
 // Configura Autorização (para controle de acesso)
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("Authenticated", policy =>
+        policy.RequireAuthenticatedUser());
+
+    options.AddPolicy("ManagerOrAdmin", policy =>
+        policy.RequireRole(RoleNames.Administrador, RoleNames.Gerente));
+
+    options.AddPolicy("AdminOnly", policy =>
+        policy.RequireRole(RoleNames.Administrador));
+});
+
 
 var app = builder.Build();
 
@@ -222,19 +234,19 @@ authGroup.MapPost("/login", async (LoginRequest request, AppDbContextBase dbCont
 // GET /auth/me → Retorna dados do usuário autenticado via token
 authGroup.MapGet("/me", async (HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
-    // Extrai os dados do token JWT
-    var tokenUser = jwt.ExtractUserFromRequest(http);
-    if (tokenUser == null)
+    // Extrai o email da claim do token já validado pelo middleware
+    var email = http.User.FindFirst(ClaimTypes.Email)?.Value;
+    if (string.IsNullOrEmpty(email))
         return Results.Unauthorized();
-
-    // Busca o usuário no banco de dados pelo e-mail extraído do token
+    //Busca o usuário autenticado no banco
     var requestingUser = await dbContext.Usuarios
         .Include(u => u.Role)
         .AsNoTracking()
-        .FirstOrDefaultAsync(u => u.Email.ToLower() == tokenUser.Email.ToLower());
+        .FirstOrDefaultAsync(u => u.Email == email);
 
     if (requestingUser == null)
         return Results.Unauthorized();
+
 
     // Mapeia para o DTO de resposta para não expor dados sensíveis
     var response = new UserResponse(requestingUser.Id, requestingUser.Username, requestingUser.Email, requestingUser.Role!.Name);
@@ -244,6 +256,7 @@ authGroup.MapGet("/me", async (HttpContext http, AppDbContextBase dbContext, Jwt
 
     return Results.Ok(response);
 })
+.RequireAuthorization("Authenticated")
 .WithSummary("Dados do usuário logado")
 .WithDescription("Retorna os dados do usuário a partir do token JWT, incluindo um link HATEOAS para o recurso do usuário.")
 .Produces<UserResponse>(200)
@@ -313,7 +326,9 @@ authGroup.MapPost("/reset-password", (ResetPasswordRequest request, AppDbContext
 // ROTAS DE GESTÃO DE USUÁRIOS
 // -----------------------------------------------------------
 
-var userGroup = app.MapGroup("/users").WithTags("Usuários");
+var userGroup = app.MapGroup("/users")
+    .WithTags("Usuários")
+    .RequireAuthorization("ManagerOrAdmin");
 
 
 // GET /users → Lista todos os usuários
@@ -328,16 +343,17 @@ userGroup.MapGet("/", async (
     if (pageNumber <= 0) pageNumber = 1;
     if (pageSize <= 0) pageSize = 10; // Tamanho de página padrão
 
-    // Extrai o usuário autenticado a partir do token JWT
-    var tokenUser = jwt.ExtractUserFromRequest(http);
-    if (tokenUser == null)
+    // Extrai o email da claim do token já validado pelo middleware
+    var email = http.User.FindFirst(ClaimTypes.Email)?.Value;
+    if (string.IsNullOrEmpty(email))
         return Results.Unauthorized();
-    // Busca o usuário que está fazendo a requisição no banco para checar suas permissões reais
+    //Busca o usuário autenticado no banco
     var requestingUser = await dbContext.Usuarios
         .Include(u => u.Role)
         .AsNoTracking()
-        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
-    if (requestingUser == null) 
+        .FirstOrDefaultAsync(u => u.Email == email);
+
+    if (requestingUser == null)
         return Results.Unauthorized();
 
     // Inicia a consulta (IQueryable permite que o EF otimize o SQL)
@@ -393,16 +409,17 @@ userGroup.MapGet("/", async (
 // GET /users/{id} → Retorna um usuário específico por ID
 userGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
-    // Extrai o usuário autenticado a partir do token JWT
-    var tokenUser = jwt.ExtractUserFromRequest(http);
-    if (tokenUser == null)
+    // Extrai o email da claim do token já validado pelo middleware
+    var email = http.User.FindFirst(ClaimTypes.Email)?.Value;
+    if (string.IsNullOrEmpty(email))
         return Results.Unauthorized();
-    // Busca o usuário que está fazendo a requisição no banco para checar suas permissões reais
+    //Busca o usuário autenticado no banco
     var requestingUser = await dbContext.Usuarios
         .Include(u => u.Role)
         .AsNoTracking()
-        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
-    if (requestingUser == null) 
+        .FirstOrDefaultAsync(u => u.Email == email);
+
+    if (requestingUser == null)
         return Results.Unauthorized();
 
     // Busca o usuário alvo pelo ID no banco, incluindo a Role
@@ -450,15 +467,16 @@ userGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http,
 // GET /users/by-email → Busca usuário pelo e-mail
 userGroup.MapGet("/by-email", async (string email, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
-    // Extrai o usuário autenticado a partir do token JWT
-    var tokenUser = jwt.ExtractUserFromRequest(http);
-    if (tokenUser == null)
+    // Extrai o email da claim do token já validado pelo middleware
+    var email = http.User.FindFirst(ClaimTypes.Email)?.Value;
+    if (string.IsNullOrEmpty(email))
         return Results.Unauthorized();
-    // Busca o usuário que está fazendo a requisição no banco para checar suas permissões reais
+    //Busca o usuário autenticado no banco
     var requestingUser = await dbContext.Usuarios
         .Include(u => u.Role)
         .AsNoTracking()
-        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
+        .FirstOrDefaultAsync(u => u.Email == email);
+
     if (requestingUser == null)
         return Results.Unauthorized();
 
@@ -499,15 +517,16 @@ userGroup.MapGet("/by-email", async (string email, HttpContext http, AppDbContex
 // POST /users → Cria um novo usuário
 userGroup.MapPost("/", async (CreateUserRequest request, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
-    // Extrai o usuário autenticado do token
-    var tokenUser = jwt.ExtractUserFromRequest(http);
-    if (tokenUser == null)
+    // Extrai o email da claim do token já validado pelo middleware
+    var email = http.User.FindFirst(ClaimTypes.Email)?.Value;
+    if (string.IsNullOrEmpty(email))
         return Results.Unauthorized();
-    // Busca o usuário que está realizando a ação no banco para checar suas permissões reais
+    //Busca o usuário autenticado no banco
     var requestingUser = await dbContext.Usuarios
         .Include(u => u.Role)
         .AsNoTracking()
-        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
+        .FirstOrDefaultAsync(u => u.Email == email);
+
     if (requestingUser == null)
         return Results.Unauthorized();
 
@@ -570,15 +589,16 @@ userGroup.MapPost("/", async (CreateUserRequest request, HttpContext http, AppDb
 // PUT /users/{id} → Atualiza os dados de um usuário
 userGroup.MapPut(AppConstants.IdRouteParameter, async (int id, UpdateUserRequest request, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
-    // Extrai o usuário autenticado
-    var tokenUser = jwt.ExtractUserFromRequest(http);
-    if (tokenUser == null)
+    // Extrai o email da claim do token já validado pelo middleware
+    var email = http.User.FindFirst(ClaimTypes.Email)?.Value;
+    if (string.IsNullOrEmpty(email))
         return Results.Unauthorized();
-    // Busca o usuário que está fazendo a requisição no banco para checar suas permissões reais
+    //Busca o usuário autenticado no banco
     var requestingUser = await dbContext.Usuarios
         .Include(u => u.Role)
         .AsNoTracking()
-        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
+        .FirstOrDefaultAsync(u => u.Email == email);
+
     if (requestingUser == null)
         return Results.Unauthorized();
 
@@ -627,15 +647,16 @@ userGroup.MapPut(AppConstants.IdRouteParameter, async (int id, UpdateUserRequest
 // DELETE /users/{id} → Remove um usuário do sistema
 userGroup.MapDelete(AppConstants.IdRouteParameter, async (int id, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
-    // Extrai o usuário autenticado
-    var tokenUser = jwt.ExtractUserFromRequest(http);
-    if (tokenUser == null)
+    // Extrai o email da claim do token já validado pelo middleware
+    var email = http.User.FindFirst(ClaimTypes.Email)?.Value;
+    if (string.IsNullOrEmpty(email))
         return Results.Unauthorized();
-    // Busca o usuário que está fazendo a requisição no banco para checar suas permissões reais
+    //Busca o usuário autenticado no banco
     var requestingUser = await dbContext.Usuarios
         .Include(u => u.Role)
         .AsNoTracking()
-        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
+        .FirstOrDefaultAsync(u => u.Email == email);
+
     if (requestingUser == null)
         return Results.Unauthorized();
         
@@ -691,7 +712,9 @@ userGroup.MapDelete(AppConstants.IdRouteParameter, async (int id, HttpContext ht
 // ROTAS DE GESTÃO DE CARGOS (ROLES)
 // -----------------------------------------------------------
 
-var roleGroup = app.MapGroup("/roles").WithTags("Cargos");
+var roleGroup = app.MapGroup("/roles")
+    .WithTags("Cargos")
+    .RequireAuthorization("AdminOnly");
 
 
 // GET /roles → Lista todas as roles
@@ -705,13 +728,20 @@ roleGroup.MapGet("/", async (
     if (pageNumber <= 0) pageNumber = 1;
     if (pageSize <= 0) pageSize = 10;
 
-    var tokenUser = jwt.ExtractUserFromRequest(http);
-    if (tokenUser == null) return Results.Unauthorized();
+    // Extrai o email da claim do token já validado pelo middleware
+    var email = http.User.FindFirst(ClaimTypes.Email)?.Value;
+    if (string.IsNullOrEmpty(email))
+        return Results.Unauthorized();
+    //Busca o usuário autenticado no banco
+    var requestingUser = await dbContext.Usuarios
+        .Include(u => u.Role)
+        .AsNoTracking()
+        .FirstOrDefaultAsync(u => u.Email == email);
 
-    var user = await dbContext.Usuarios.Include(u => u.Role)
-        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
-
-    if (user?.Role?.Name != RoleNames.Administrador)
+    if (requestingUser == null)
+        return Results.Unauthorized();
+    //Acesso somente pelo Admin
+    if (requestingUser.Role?.Name != RoleNames.Administrador)
         return Results.Forbid();
 
     // Consulta base
@@ -750,13 +780,20 @@ roleGroup.MapGet("/", async (
 // GET /roles/{id} → Busca uma role por ID
 roleGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
-    var tokenUser = jwt.ExtractUserFromRequest(http);
-    if (tokenUser == null) return Results.Unauthorized();
-    
-    var user = await dbContext.Usuarios.Include(u => u.Role)
-        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
+    // Extrai o email da claim do token já validado pelo middleware
+    var email = http.User.FindFirst(ClaimTypes.Email)?.Value;
+    if (string.IsNullOrEmpty(email))
+        return Results.Unauthorized();
+    //Busca o usuário autenticado no banco
+    var requestingUser = await dbContext.Usuarios
+        .Include(u => u.Role)
+        .AsNoTracking()
+        .FirstOrDefaultAsync(u => u.Email == email);
 
-    if (user?.Role?.Name != RoleNames.Administrador)
+    if (requestingUser == null)
+        return Results.Unauthorized();
+    //Acesso somente pelo Admin
+    if (requestingUser.Role?.Name != RoleNames.Administrador)
         return Results.Forbid();
 
     // Busca a entidade 'Role' completa no banco de dados
@@ -788,13 +825,20 @@ roleGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http,
 // POST /roles → Cria uma nova role
 roleGroup.MapPost("/", async (CreateRoleRequest request, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
-    var tokenUser = jwt.ExtractUserFromRequest(http);
-    if (tokenUser == null) return Results.Unauthorized();
-    
-    var user = await dbContext.Usuarios.Include(u => u.Role)
-        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
+    // Extrai o email da claim do token já validado pelo middleware
+    var email = http.User.FindFirst(ClaimTypes.Email)?.Value;
+    if (string.IsNullOrEmpty(email))
+        return Results.Unauthorized();
+    //Busca o usuário autenticado no banco
+    var requestingUser = await dbContext.Usuarios
+        .Include(u => u.Role)
+        .AsNoTracking()
+        .FirstOrDefaultAsync(u => u.Email == email);
 
-    if (user?.Role?.Name != RoleNames.Administrador)
+    if (requestingUser == null)
+        return Results.Unauthorized();
+    //Acesso somente pelo Admin
+    if (requestingUser.Role?.Name != RoleNames.Administrador)
         return Results.Forbid();
 
     // Cria uma nova role no banco de dados
@@ -816,13 +860,20 @@ roleGroup.MapPost("/", async (CreateRoleRequest request, HttpContext http, AppDb
 // PUT /roles/{id} → Atualiza uma role existente
 roleGroup.MapPut(AppConstants.IdRouteParameter, async (int id, UpdateRoleRequest request, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
-    var tokenUser = jwt.ExtractUserFromRequest(http);
-    if (tokenUser == null) return Results.Unauthorized();
+    // Extrai o email da claim do token já validado pelo middleware
+    var email = http.User.FindFirst(ClaimTypes.Email)?.Value;
+    if (string.IsNullOrEmpty(email))
+        return Results.Unauthorized();
+    //Busca o usuário autenticado no banco
+    var requestingUser = await dbContext.Usuarios
+        .Include(u => u.Role)
+        .AsNoTracking()
+        .FirstOrDefaultAsync(u => u.Email == email);
 
-    var user = await dbContext.Usuarios.Include(u => u.Role)
-        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
-
-    if (user?.Role?.Name != RoleNames.Administrador)
+    if (requestingUser == null)
+        return Results.Unauthorized();
+    //Acesso somente pelo Admin
+    if (requestingUser.Role?.Name != RoleNames.Administrador)
         return Results.Forbid();
 
     // Busca a role pelo ID
@@ -847,13 +898,20 @@ roleGroup.MapPut(AppConstants.IdRouteParameter, async (int id, UpdateRoleRequest
 // DELETE /roles/{id} → Exclui uma role
 roleGroup.MapDelete(AppConstants.IdRouteParameter, async (int id, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
-    var tokenUser = jwt.ExtractUserFromRequest(http);
-    if (tokenUser == null) return Results.Unauthorized();
+    // Extrai o email da claim do token já validado pelo middleware
+    var email = http.User.FindFirst(ClaimTypes.Email)?.Value;
+    if (string.IsNullOrEmpty(email))
+        return Results.Unauthorized();
+    //Busca o usuário autenticado no banco
+    var requestingUser = await dbContext.Usuarios
+        .Include(u => u.Role)
+        .AsNoTracking()
+        .FirstOrDefaultAsync(u => u.Email == email);
 
-    var user = await dbContext.Usuarios.Include(u => u.Role)
-        .FirstOrDefaultAsync(u => u.Email == tokenUser.Email);
-
-    if (user?.Role?.Name != RoleNames.Administrador)
+    if (requestingUser == null)
+        return Results.Unauthorized();
+    //Acesso somente pelo Admin
+    if (requestingUser.Role?.Name != RoleNames.Administrador)
         return Results.Forbid();
 
     // Busca a role pelo ID
@@ -881,7 +939,8 @@ roleGroup.MapDelete(AppConstants.IdRouteParameter, async (int id, HttpContext ht
 // -----------------------------------------------------------
 var auditGroup = app.MapGroup("/audits")
     .WithTags("Auditoria")
-    .RequireAuthorization(); // Protege todo o grupo
+    .RequireAuthorization("AdminOnly");
+
 
 //GET /audits -> lista os logs do sistema para auditoria
 auditGroup.MapGet("/", async (
@@ -894,14 +953,20 @@ auditGroup.MapGet("/", async (
     if (pageNumber <= 0) pageNumber = 1;
     if (pageSize <= 0) pageSize = 20; // Um tamanho padrão para logs
 
-    var user = jwt.ExtractUserFromRequest(http);
-    if (user == null) 
+   // Extrai o email da claim do token já validado pelo middleware
+    var email = http.User.FindFirst(ClaimTypes.Email)?.Value;
+    if (string.IsNullOrEmpty(email))
         return Results.Unauthorized();
+    //Busca o usuário autenticado no banco
+    var requestingUser = await dbContext.Usuarios
+        .Include(u => u.Role)
+        .AsNoTracking()
+        .FirstOrDefaultAsync(u => u.Email == email);
 
-    var userFromDb = await dbContext.Usuarios.Include(u => u.Role).AsNoTracking()
-        .FirstOrDefaultAsync(u => u.Email == user.Email);
-
-    if (userFromDb?.Role?.Name != RoleNames.Administrador) 
+    if (requestingUser == null)
+        return Results.Unauthorized();
+    //Acesso somente pelo Admin
+    if (requestingUser.Role?.Name != RoleNames.Administrador)
         return Results.Forbid();
     
     // Consulta base
