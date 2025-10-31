@@ -406,14 +406,14 @@ userGroup.MapGet("/", async (
 .Produces(403);
 
 
-// GET /users/{id} → Retorna um usuário específico por ID
 userGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
     // Extrai o email da claim do token já validado pelo middleware
     var email = http.User.FindFirst(ClaimTypes.Email)?.Value;
     if (string.IsNullOrEmpty(email))
         return Results.Unauthorized();
-    //Busca o usuário autenticado no banco
+
+    // Busca o usuário autenticado no banco
     var requestingUser = await dbContext.Usuarios
         .Include(u => u.Role)
         .AsNoTracking()
@@ -423,29 +423,43 @@ userGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http,
         return Results.Unauthorized();
 
     // Busca o usuário alvo pelo ID no banco, incluindo a Role
-    var targetUser = await dbContext.Usuarios.Include(u => u.Role).FirstOrDefaultAsync(u => u.Id == id);
+    var targetUser = await dbContext.Usuarios
+        .Include(u => u.Role)
+        .FirstOrDefaultAsync(u => u.Id == id);
+
     if (targetUser == null)
         return Results.NotFound(AppConstants.UserNotFoundMessage);
 
+    // 🔧 Regra de visibilidade (Gerente não pode ver Admin)
+    if (requestingUser.Role?.Name == RoleNames.Gerente &&
+        targetUser.Role?.Name == RoleNames.Administrador)
+    {
+        return Results.Forbid();
+    }
+
     // Mapeia os dados do usuário para o DTO de resposta
-    var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role!.Name);
+    var response = new UserResponse(
+        targetUser.Id,
+        targetUser.Username,
+        targetUser.Email,
+        targetUser.Role!.Name
+    );
 
     // LÓGICA HATEOAS
-    // Adiciona o link "self" para o próprio recurso, que sempre está presente.
     response.Links.Add(new LinkDto($"/users/{targetUser.Id}", "self", "GET"));
 
-    // Adiciona links de outras ações (atualizar, deletar) condicionalmente, com base nas permissões.
     bool canModify = false;
     if (requestingUser.Role?.Name == RoleNames.Administrador)
     {
         // Administrador pode modificar qualquer um, exceto a si mesmo (regra de negócio).
-        if(requestingUser.Id != targetUser.Id)
+        if (requestingUser.Id != targetUser.Id)
             canModify = true;
     }
-    else if (requestingUser.Role?.Name == RoleNames.Gerente && targetUser.Role?.Name == RoleNames.Funcionario)
+    else if (requestingUser.Role?.Name == RoleNames.Gerente &&
+             targetUser.Role?.Name == RoleNames.Funcionario)
     {
         // Gerente só pode modificar Funcionários.
-            canModify = true;
+        canModify = true;
     }
 
     if (canModify)
@@ -457,21 +471,23 @@ userGroup.MapGet(AppConstants.IdRouteParameter, async (int id, HttpContext http,
     return Results.Ok(response);
 })
 .WithSummary("Buscar usuário por ID")
-.WithDescription("Administrador vê todos. Gerente vê Gerentes e Funcionários (não Admin). Funcionário não vê ninguém. A resposta inclui links HATEOAS para ações atualizar e deletar com base nas permissões do usuário autenticado, e um link 'self'.")
+.WithDescription("Administrador vê todos. Gerente vê Gerentes e Funcionários (não Admin). Funcionário não vê ninguém. A resposta inclui links HATEOAS...")
 .Produces<UserResponse>(200)
 .Produces(401)
 .Produces(403)
 .Produces(404);
 
 
+
 // GET /users/by-email → Busca usuário pelo e-mail
-userGroup.MapGet("/by-email", async (string email, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
+userGroup.MapGet("/by-email", async (string targetEmail, HttpContext http, AppDbContextBase dbContext, JwtService jwt) =>
 {
-    // Extrai o email da claim do token já validado pelo middleware
+    // Extrai o email de quem está autenticado
     var email = http.User.FindFirst(ClaimTypes.Email)?.Value;
     if (string.IsNullOrEmpty(email))
         return Results.Unauthorized();
-    //Busca o usuário autenticado no banco
+
+    // Busca o usuário autenticado no banco
     var requestingUser = await dbContext.Usuarios
         .Include(u => u.Role)
         .AsNoTracking()
@@ -480,31 +496,33 @@ userGroup.MapGet("/by-email", async (string email, HttpContext http, AppDbContex
     if (requestingUser == null)
         return Results.Unauthorized();
 
-    // Busca o usuário alvo pelo e-mail no banco, incluindo a Role
-    var targetUser = await dbContext.Usuarios.Include(u => u.Role).FirstOrDefaultAsync(u => u.Email == email);
+    // Busca o usuário alvo pelo e-mail passado como parâmetro
+    var targetUser = await dbContext.Usuarios
+        .Include(u => u.Role)
+        .FirstOrDefaultAsync(u => u.Email == targetEmail);
+
     if (targetUser == null)
         return Results.NotFound(AppConstants.UserNotFoundMessage);
 
-    if (requestingUser.Role?.Name == RoleNames.Administrador)
+    // 🔧 Mesma regra: Gerente não pode ver Admin
+    if (requestingUser.Role?.Name == RoleNames.Gerente &&
+        targetUser.Role?.Name == RoleNames.Administrador)
     {
-        // Se for Administrador, pode visualizar qualquer usuário
-        var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role!.Name);
-        return Results.Ok(response);
-    }
-    else if (requestingUser.Role?.Name == RoleNames.Gerente)
-    {
-        // Gerente pode visualizar Gerentes e Funcionários, mas não Administradores
-        if (targetUser.Role?.Name == RoleNames.Administrador)
-            return Results.Forbid();
-
-        var response = new UserResponse(targetUser.Id, targetUser.Username, targetUser.Email, targetUser.Role!.Name);
-        return Results.Ok(response);
-    }
-    else
-    {
-        // Funcionário não pode visualizar ninguém
         return Results.Forbid();
     }
+
+    // Admin pode ver qualquer coisa,
+    // Gerente pode ver Gerente/Funcionário,
+    // Funcionário nem entra porque o grupo já tem .RequireAuthorization("ManagerOrAdmin")
+
+    var response = new UserResponse(
+        targetUser.Id,
+        targetUser.Username,
+        targetUser.Email,
+        targetUser.Role!.Name
+    );
+
+    return Results.Ok(response);
 })
 .WithSummary("Buscar usuário por e-mail")
 .WithDescription("Administrador vê todos. Gerente vê Gerentes e Funcionários (não Admin). Funcionário não vê ninguém.")
