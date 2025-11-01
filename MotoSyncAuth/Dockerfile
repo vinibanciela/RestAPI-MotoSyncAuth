@@ -1,4 +1,4 @@
-﻿# Etapa base (ASP.NET Core Runtime)
+﻿# 1) Etapa base (ASP.NET Core Runtime)
 # Esta etapa é usada para definir o ambiente de execução padrão
 # que inclui o usuário não-root, variáveis de ambiente, e a porta exposta.
 # Estas instruções são herdadas pela etapa 'final'
@@ -23,35 +23,35 @@ EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=5s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:8080/healthz || exit 1
 
-# Etapa build (SDK do .NET)
+# 2) Etapa build (SDK do .NET)
 # Esta etapa é responsável por compilar e publicar a aplicação
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
 
-# 1) Copiar C# project file e restaurar dependências
+# Copiar C# project file e restaurar dependências
 # Copia apenas o arquivo .csproj para otimizar o cache da camada do Docker
 COPY ["MotoSyncAuth.csproj", "./"]
 RUN dotnet restore "MotoSyncAuth.csproj"
 
-# 2) Copiar todo o restante do código-fonte
+# Copiar todo o restante do código-fonte
 COPY . .
 
-# 3) Construir (build) o projeto em modo Release
+# Construir (build) o projeto em modo Release
 RUN dotnet build "MotoSyncAuth.csproj" -c "$BUILD_CONFIGURATION" -o /app/build
 
-# 4) Publicar (publish) a aplicação em /app/publish
+# Publicar (publish) a aplicação em /app/publish
 RUN dotnet publish "MotoSyncAuth.csproj" -c "$BUILD_CONFIGURATION" -o /app/publish /p:UseAppHost=false
 
-# Etapa final (Runtime puro, sem SDK, apenas para execução da aplicação)
+# 3) Etapa final (Runtime puro, sem SDK, apenas para execução da aplicação)
 # Esta etapa é a imagem final e leve que será executada em produção.
 # Ela herda o WORKDIR, USER, ENV e EXPOSE definidos na 'base'.
 FROM base AS final
 
-# 5) Copiar somente a saída de publish - aplicação publicada - para o contêiner final
+# Copiar somente a saída de publish - aplicação publicada - para o contêiner final
 # ATENÇÃO: Usamos '--chown=motosyncuser:motosyncuser' para garantir que os arquivos copiados
 # já tenham o 'motosyncuser' como proprietário, seguindo o princípio do menor privilégio.
 COPY --chown=motosyncuser:motosyncuser --from=build /app/publish .
 
-# 6) Comando padrão para executar a API: Executar a DLL gerada
+# Comando padrão para executar a API: Executar a DLL gerada
 ENTRYPOINT ["dotnet", "MotoSyncAuth.dll"]
