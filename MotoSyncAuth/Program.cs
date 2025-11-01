@@ -202,6 +202,7 @@ app.MapGet("/health/live", () => Results.Ok(new { status = "ok", message = "API 
     .WithSummary("Verifica se a API está viva")
     .WithDescription("Retorna 200 OK se o processo da API está em execução. Não verifica dependências externas.")
     .Produces<object>(200)
+    .WithTags("Health Checks")
     .WithOpenApi(); // <-- isso faz o Swagger exibir
     //.ExcludeFromDescription(); <-- isso deixa oculto do swagger, removendo os demais acima
 
@@ -210,6 +211,7 @@ app.MapHealthChecks("/health/ready")
     .WithName("Readiness")
     .WithSummary("Verifica se a API está pronta para receber tráfego")
     .WithDescription("Retorna 200 OK se a API está operacional e consegue falar com o banco. Retorna 503 se alguma dependência crítica falhar.")
+    .WithTags("Health Checks")
     .WithOpenApi(); // <-- Swagger exibe
     //.ExcludeFromDescription(); <-- isso deixa oculto do swagger, removendo os demais acima
 
@@ -219,6 +221,7 @@ app.MapGet("/healthz", () => Results.Ok("Healthy"))
     .WithSummary("Endpoint de compatibilidade para probes Docker")
     .WithDescription("Usado pelo Docker HEALTHCHECK para saber se o contêiner está vivo.")
     .Produces<string>(200)
+    .WithTags("Health Checks")
     .WithOpenApi(); // <-- Swagger exibe
     //.ExcludeFromDescription(); <-- isso deixa oculto do swagger, removendo os demais acima
 
