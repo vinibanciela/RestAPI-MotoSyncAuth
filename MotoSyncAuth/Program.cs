@@ -163,6 +163,8 @@ using (var scope = app.Services.CreateScope())
     dbContext.Database.Migrate(); //aplica migrations automaticamente
 }
 
+
+
 // -----------------------------------------------------------
 // MIDDLEWARES DO PIPELINE HTTP
 // -----------------------------------------------------------
@@ -192,22 +194,34 @@ app.UseAuthentication();
 // Habilita o middleware de autorização para verificar permissões com base no JWT extraído.
 app.UseAuthorization();
 
+
 // ENDPOINTS DE HEALTH
 // Liveness: processo está no ar
-app.MapGet("/health/live", () =>
-    Results.Ok(new { status = "ok", message = "API process running" })
-)
-.WithName("Liveness")
-.ExcludeFromDescription();
+app.MapGet("/health/live", () => Results.Ok(new { status = "ok", message = "API process running" }))
+    .WithName("Liveness")
+    .WithSummary("Verifica se a API está viva")
+    .WithDescription("Retorna 200 OK se o processo da API está em execução. Não verifica dependências externas.")
+    .Produces<object>(200)
+    .WithOpenApi(); // <-- isso faz o Swagger exibir
+    //.ExcludeFromDescription(); <-- isso deixa oculto do swagger, removendo os demais acima
 
-// Readiness: pronto pra receber tráfego (banco acessível, etc.)
+// Readiness: pronto pra receber tráfego (DB, etc.)
 app.MapHealthChecks("/health/ready")
     .WithName("Readiness")
-    .ExcludeFromDescription();
+    .WithSummary("Verifica se a API está pronta para receber tráfego")
+    .WithDescription("Retorna 200 OK se a API está operacional e consegue falar com o banco. Retorna 503 se alguma dependência crítica falhar.")
+    .WithOpenApi(); // <-- Swagger exibe
+    //.ExcludeFromDescription(); <-- isso deixa oculto do swagger, removendo os demais acima
 
-// Compatibiliddade (Opcional: manter compat com seu endpoint antigo)
+// Health legado usado no Dockerfile (igual liveness antigo)
 app.MapGet("/healthz", () => Results.Ok("Healthy"))
-    .ExcludeFromDescription();
+    .WithName("CompatHealthz")
+    .WithSummary("Endpoint de compatibilidade para probes Docker")
+    .WithDescription("Usado pelo Docker HEALTHCHECK para saber se o contêiner está vivo.")
+    .Produces<string>(200)
+    .WithOpenApi(); // <-- Swagger exibe
+    //.ExcludeFromDescription(); <-- isso deixa oculto do swagger, removendo os demais acima
+
 
 
 // -----------------------------------------------------------
@@ -249,7 +263,7 @@ authGroup.MapPost("/login", async (LoginRequest request, AppDbContextBase dbCont
 .WithSummary("Login do usuário")
 .WithDescription("Autentica o usuário e retorna um token JWT.Em caso de falha (401), a resposta incluirá um link para recuperação de senha.")
 .Produces<AuthResponse>(200)
-.Produces<ErrorResponse>(401) // Atualiza a documentação do Swagger para o novo tipo de erro
+.Produces<ErrorResponse>(401)
 .RequireRateLimiting("default");
 
 
