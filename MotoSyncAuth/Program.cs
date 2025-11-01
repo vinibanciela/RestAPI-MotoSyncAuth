@@ -10,6 +10,7 @@ using MotoSyncAuth.Data;
 using Microsoft.EntityFrameworkCore;
 using MotoSyncAuth.Constants;
 using System.Security.Claims;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 
 var builder = WebApplication.CreateBuilder(args);
@@ -213,9 +214,42 @@ app.MapHealthChecks("/health/ready")
     .WithDescription("Retorna 200 OK se a API está operacional e consegue falar com o banco. Retorna 503 se alguma dependência crítica falhar.")
     .WithTags("Health Checks")
     .WithOpenApi(); // <-- Swagger exibe
-    //.ExcludeFromDescription(); <-- isso deixa oculto do swagger, removendo os demais acima
+                    //.ExcludeFromDescription(); <-- isso deixa oculto do swagger, removendo os demais acima
 
-// Health legado usado no Dockerfile (igual liveness antigo)
+// Endpoint Readiness legível pelo Swagger
+app.MapGet("/health/ready-info", async (HealthCheckService healthChecks) =>
+{
+    // roda os health checks registrados (inclui o AddDbContextCheck<AppDbContextBase>("database"))
+    var report = await healthChecks.CheckHealthAsync();
+
+    var status = report.Status.ToString(); // "Healthy", "Degraded", "Unhealthy"
+
+    var details = report.Entries.ToDictionary(
+        e => e.Key,              // ex: "database"
+        e => new {
+            status = e.Value.Status.ToString(),
+            error = e.Value.Exception?.Message,
+            duration = e.Value.Duration.ToString()
+        }
+    );
+
+    return Results.Json(new {
+        overallStatus = status,
+        checks = details
+    }, statusCode: report.Status == HealthStatus.Healthy 
+        ? StatusCodes.Status200OK 
+        : StatusCodes.Status503ServiceUnavailable
+    );
+})
+    .WithName("ReadinessDetails")
+    .WithSummary("Detalha o estado de prontidão da API")
+    .WithDescription("Retorna o status geral e o status de cada dependência crítica (ex.: banco de dados).")
+    .Produces<object>(200)
+    .Produces<object>(503)
+    .WithTags("Health Checks")
+    .WithOpenApi();
+
+// Health legado usado no Dockerfile (liveness)
 app.MapGet("/healthz", () => Results.Ok("Healthy"))
     .WithName("CompatHealthz")
     .WithSummary("Endpoint de compatibilidade para probes Docker")
