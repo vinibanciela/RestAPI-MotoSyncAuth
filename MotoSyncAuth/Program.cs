@@ -145,6 +145,12 @@ builder.Services.AddAuthorization(options =>
 });
 
 
+
+builder.Services.AddHealthChecks()
+    // Checa se consegue resolver e conversar com o DbContext
+    .AddDbContextCheck<AppDbContextBase>("database");
+
+
 var app = builder.Build();
 
 // --- INÍCIO DO CÓDIGO PARA APLICAR MIGRATIONS NO STARTUP ---
@@ -186,6 +192,22 @@ app.UseAuthentication();
 // Habilita o middleware de autorização para verificar permissões com base no JWT extraído.
 app.UseAuthorization();
 
+// ENDPOINTS DE HEALTH
+// Liveness: processo está no ar
+app.MapGet("/health/live", () =>
+    Results.Ok(new { status = "ok", message = "API process running" })
+)
+.WithName("Liveness")
+.ExcludeFromDescription();
+
+// Readiness: pronto pra receber tráfego (banco acessível, etc.)
+app.MapHealthChecks("/health/ready")
+    .WithName("Readiness")
+    .ExcludeFromDescription();
+
+// Compatibiliddade (Opcional: manter compat com seu endpoint antigo)
+app.MapGet("/healthz", () => Results.Ok("Healthy"))
+    .ExcludeFromDescription();
 
 
 // -----------------------------------------------------------
@@ -1026,10 +1048,6 @@ auditGroup.MapGet("/", async (
 .Produces(403);
 
 
-
-
-// Rota para Health Check do Docker
-app.MapGet("/healthz", () => Results.Ok("Healthy")).ExcludeFromDescription();
 
 // 🚀 Inicializa o servidor
 await app.RunAsync();
