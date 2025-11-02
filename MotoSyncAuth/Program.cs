@@ -11,6 +11,7 @@ using Microsoft.EntityFrameworkCore;
 using MotoSyncAuth.Constants;
 using System.Security.Claims;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using MotoSyncAuth.ML;
 
 
 var builder = WebApplication.CreateBuilder(args);
@@ -87,6 +88,10 @@ builder.Services.AddRateLimiter(opt =>
 builder.Services.AddSingleton<JwtService>();    // Gera e valida tokens
 
 //builder.Services.AddSingleton<UserService>();   // Simula usuários em memória (utilizado para testar API sem conexão oracle)
+
+
+// Adiciona o novo serviço de "ML"
+builder.Services.AddSingleton<PasswordStrengthService>();
 
 
 // AppDbContext com conexão para múltiplos provedores conforme o ambiente
@@ -1097,6 +1102,30 @@ auditGroup.MapGet("/", async (
 .Produces<PagedResponse<AuditLogResponse>>(200)
 .Produces(401)
 .Produces(403);
+
+
+
+// -----------------------------------------------------------
+// GRUPO DE ENDPOINTS DE MACHINE LEARNING
+// -----------------------------------------------------------
+var mlGroup = app.MapGroup("/ml")
+    .WithTags("Machine Learning"); // Grupo separado no Swagger
+
+// POST /ml/password-strength
+mlGroup.MapPost("/password-strength", (PasswordInput request, PasswordStrengthService svc) =>
+{
+    // A API recebe o JSON { "password": "..." }
+    // O serviço executa a avaliação
+    var result = svc.Evaluate(request.Password);
+
+    // E a API retorna o resultado da "previsão"
+    return Results.Ok(result);
+})
+.WithSummary("Avalia a força de uma senha sugerida")
+.WithDescription("Usa análise (atualmente heurística, futuramente ML) para estimar quão forte é a senha e retornar recomendações.")
+.Produces<PasswordStrengthPrediction>(200) // Documenta o retorno de sucesso
+.AllowAnonymous() // Define que este endpoint é público
+.WithOpenApi();
 
 
 
