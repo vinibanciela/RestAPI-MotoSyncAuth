@@ -29,6 +29,10 @@ namespace MotoSyncAuth.Services
 
             // 4. Usar o modelo para prever!
             var prediction = _pool.Predict(modelName: _modelName, example: input);
+
+            
+            // faz um cast do 'float' PredictedLabel (ex: 1.0) para 'int' (ex: 1)
+            var label = (int)prediction.PredictedLabel;
             
             // 5. TRADUZIR a saída numérica do modelo para texto
             prediction.Classification = prediction.PredictedLabel switch

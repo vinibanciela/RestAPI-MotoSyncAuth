@@ -17,7 +17,7 @@ namespace MotoSyncAuth.ML
         // O modelo vai cuspir o "Label" previsto (0, 1, ou 2)
         // O ML.NET usa "Key" (um tipo uint) para labels de classificação
         [ColumnName("PredictedLabel")]
-        public uint PredictedLabel { get; set; } 
+        public float PredictedLabel { get; set; } 
 
         // O modelo também nos dá as probabilidades de cada classe
         public float[] Score { get; set; } = Array.Empty<float>();
