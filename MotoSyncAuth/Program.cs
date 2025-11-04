@@ -12,6 +12,7 @@ using MotoSyncAuth.Constants;
 using System.Security.Claims;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using MotoSyncAuth.ML;
+using Microsoft.Extensions.ML;
 
 
 var builder = WebApplication.CreateBuilder(args);
@@ -85,13 +86,21 @@ builder.Services.AddRateLimiter(opt =>
 
 
 // Injeção de dependência dos nossos serviços customizados
-builder.Services.AddSingleton<JwtService>();    // Gera e valida tokens
+// Gera e valida tokens JWT
+builder.Services.AddSingleton<JwtService>();
+
 
 //builder.Services.AddSingleton<UserService>();   // Simula usuários em memória (utilizado para testar API sem conexão oracle)
 
 
-// Adiciona o novo serviço de "ML"
+// Adiciona serviço de "ML"
 builder.Services.AddSingleton<PasswordStrengthService>();
+
+
+// Registra o Pool de Previsão do ML.NET
+builder.Services.AddPredictionEnginePool<PasswordInput, PasswordStrengthPrediction>()
+    .FromFile(modelName: "PasswordStrengthModel", // Um nome para o modelo
+              filePath: "PasswordStrengthModel.zip"); // O arquivo .zip
 
 
 // AppDbContext com conexão para múltiplos provedores conforme o ambiente
