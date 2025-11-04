@@ -35,7 +35,7 @@ namespace MotoSyncAuth.Services
             var label = (int)prediction.PredictedLabel;
             
             // 5. TRADUZIR a saída numérica do modelo para texto
-            prediction.Classification = prediction.PredictedLabel switch
+            prediction.Classification = label switch
             {
                 0 => "fraca",
                 1 => "média",
