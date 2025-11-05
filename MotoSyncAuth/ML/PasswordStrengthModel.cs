@@ -9,6 +9,11 @@ namespace MotoSyncAuth.ML
     {
         [LoadColumn(0)]
         public string Password { get; set; } = string.Empty;
+        // ADICIONE ESTA LINHA:
+        // O pipeline espera esta coluna, mesmo que não a usemos para prever.
+        // O [LoadColumn(1)] garante que corresponde ao CSV original.
+        [LoadColumn(1)]
+        public float Strength { get; set; }
     }
 
     // Dados de saída do modelo
