@@ -98,7 +98,7 @@ builder.Services.AddSingleton<PasswordStrengthService>();
 
 
 // Registra o Pool de Previsão do ML.NET
-builder.Services.AddPredictionEnginePool<PasswordInput, PasswordStrengthPrediction>()
+builder.Services.AddPredictionEnginePool<PasswordModelInput, PasswordStrengthPrediction>()
     .FromFile(modelName: "PasswordStrengthModel", // Um nome para o modelo
               filePath: "PasswordStrengthModel.zip"); // O arquivo .zip
 
@@ -1121,7 +1121,7 @@ var mlGroup = app.MapGroup("/ml")
     .WithTags("Machine Learning"); // Grupo separado no Swagger
 
 // POST /ml/password-strength
-mlGroup.MapPost("/password-strength", (PasswordInput request, PasswordStrengthService svc) =>
+mlGroup.MapPost("/password-strength", (PasswordStrengthRequest request, PasswordStrengthService svc) =>
 {
     // A API recebe o JSON { "password": "..." }
     // O serviço executa a avaliação

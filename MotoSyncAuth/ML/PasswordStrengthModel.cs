@@ -5,11 +5,11 @@ namespace MotoSyncAuth.ML
 {
     // Dados de entrada para o modelo
     // O [LoadColumn(0)] é usado para dizer ao ML.NET qual coluna do arquivo de dados ele deve ler.
-    public class PasswordInput
+    public class PasswordModelInput
     {
         [LoadColumn(0)]
         public string Password { get; set; } = string.Empty;
-        // ADICIONE ESTA LINHA:
+        // ADICIONE ESTA LINHA: manter essa coluna pra casar com o modelo treinado.
         // O pipeline espera esta coluna, mesmo que não a usemos para prever.
         // O [LoadColumn(1)] garante que corresponde ao CSV original.
         [LoadColumn(1)]
