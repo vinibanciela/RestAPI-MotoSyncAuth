@@ -60,6 +60,8 @@ A documentação completa da API foi elaborada com base no padrão OpenAPI, util
 
 A preferência pela estrutura "Minimal" se deu pela modularidade que foi pensado o sistema, cuidando apenas de uma parte (autenticação e gerenciamento de acesso) a nossa API não interfere na competência das demais. No mesmo sentido, a organização do código foi desenhada então para garantir manutenibilidade, clareza e eficiência, facilitando a continuidade e expansão do projeto em etapas futuras.
 
+Obs: No momento não utilizamos esta API pois não iria dar tempo de criar todas as telas no front, e criamos um sistema simples de cadastro em java mesmo para facilitar a integração. 
+
 ## 🚀 Guia de Execução [Ambiente Development - Local]
 
 ### 📦 Pré-requisitos
@@ -309,6 +311,75 @@ Finalmente, criamos o serviço que irá executar nossa API.
 - ¹ Gerente pode criar, atualizar e excluir **apenas usuários Funcionários**.
 - ² Gerente pode visualizar **usuários do mesmo nível ou inferior (Gerente e Funcionário)**.
 
+## HealthChecks 
+dinsponíveis em: 
+- http://localhost:8080/health
+- http://localhost:8080/health/ready
+- http://localhost:8080/health/ready-info
+- http://localhost:8080//healthz
+
+
+## MotoSyncAuth.Trainer (ML.NET)
+Para aumentar a segurança e a inteligência da plataforma, a API agora inclui um endpoint de Machine Learning (/ml/password-strength) que utiliza um modelo treinado com ML.NET para realizar a classificação de força de senhas (fraca, média, forte).
+
+Esta implementação substitui uma heurística baseada em regras por um modelo de classificação real, treinado a partir de um conjunto de dados.
+
+Arquitetura da Solução
+A solução para este recurso é dividida em dois projetos distintos para manter uma arquitetura limpa e desacoplada (princípio da Separação de Responsabilidades):
+
+MotoSyncAuth (A API Principal)
+
+É responsável por consumir o modelo treinado.
+
+Ela não sabe como o modelo é treinado.
+
+Usa o pacote Microsoft.Extensions.ML para registrar um PredictionEnginePool no Program.cs. Este pool carrega o arquivo PasswordStrengthModel.zip em memória de forma otimizada para alto desempenho em requisições web.
+
+O endpoint é desacoplado do modelo: ele recebe um DTO público (PasswordStrengthRequest) e o PasswordStrengthService atua como um "tradutor", mapeando o DTO para o formato que o modelo espera (PasswordModelInput).
+
+MotoSyncAuth.Trainer (O Projeto de Treinamento)
+
+Este é um Aplicativo de Console separado (dotnet new console).
+
+Sua única responsabilidade é treinar o modelo.
+
+Ele lê um conjunto de dados de senhas rotuladas (passwords.csv).
+
+Ele define um pipeline do ML.NET que:
+
+Converte o texto da senha em features numéricas (FeaturizeText).
+
+Usa um algoritmo de classificação multiclasse (SdcaMaximumEntropy) para treinar o modelo.
+
+Ao ser executado (dotnet run), ele salva o modelo treinado (PasswordStrengthModel.zip) diretamente na pasta do projeto MotoSyncAuth, pronto para ser usado pela API.
+
+Como Usar o Endpoint
+O endpoint é público (não requer autenticação) e pode ser usado para validar a força de uma senha antes do cadastro.
+
+Endpoint: POST /ml/password-strength
+
+Request Body:
+
+JSON
+
+{
+  "password": "MinhaSenha@123"
+}
+Response Body (Sucesso 200 OK):
+
+JSON
+
+{
+  "predictedLabel": 2,
+  "score": [
+    0.0012,
+    0.1034,
+    0.8954
+  ],
+  "classification": "forte",
+  "advice": "Senha forte. Evite reutilizar essa senha em outros serviços.",
+  "confidence": 0.8954
+}
 ## 📘 Documentação Interativa
 
 - Disponível em `/swagger` (padrão ao rodar) ou `/redoc` caso preferir.
